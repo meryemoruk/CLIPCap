@@ -21,7 +21,7 @@ def main(args):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)  
     if os.path.exists(args.savepath)==False:
         os.makedirs(args.savepath)
-    best_bleu4 = 0.4  # BLEU-4 score right now
+    best_bleu4 = 0  # BLEU-4 score right now
     start_epoch = 0
     with open(os.path.join(args.list_path + args.vocab_file + '.json'), 'r') as f:
         word_vocab = json.load(f)
@@ -63,7 +63,7 @@ def main(args):
     # Custom dataloaders
     if args.data_name == 'LEVIR_CC':
         train_loader = data.DataLoader(
-            LEVIRCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            LEVIRCCDataset(args.data_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.train_batchsize, shuffle=True, num_workers=args.workers, pin_memory=True)
         val_loader = data.DataLoader(
             LEVIRCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
@@ -213,7 +213,7 @@ def main(args):
             encoder_lr_scheduler.step()
             #print(encoder_optimizer.param_groups[0]['lr'])
         # Check if there was an improvement        
-        if(True):
+        if  Bleu_4 > best_bleu4:
             best_bleu4 = max(Bleu_4, best_bleu4)
             #save_checkpoint                
             print('Save Model')  
@@ -250,12 +250,12 @@ if __name__ == '__main__':
     parser.add_argument('--print_freq',type=int, default=50, help='print training/validation stats every __ batches')
     # Training parameters
     parser.add_argument('--fine_tune_encoder', type=bool, default=True, help='whether fine-tune encoder or not')    
-    parser.add_argument('--train_batchsize', type=int, default=16, help='batch_size for training')
+    parser.add_argument('--train_batchsize', type=int, default=64, help='batch_size for training')
     parser.add_argument('--network', default='resnet101', help='define the encoder to extract features')
     parser.add_argument('--encoder_dim',default=768, help='the dimension of extracted features using different network')
     parser.add_argument('--feat_size', default=16, help='define the output size of encoder to extract features')
     parser.add_argument('--num_epochs', type=int, default=50, help='number of epochs to train for (if early stopping is not triggered).')
-    parser.add_argument('--workers', type=int, default=2, help='for data-loading; right now, only 0 works with h5pys in windows.')
+    parser.add_argument('--workers', type=int, default=8, help='for data-loading; right now, only 0 works with h5pys in windows.')
     parser.add_argument('--encoder_lr', type=float, default=1e-4, help='learning rate for encoder if fine-tuning.')
     parser.add_argument('--decoder_lr', type=float, default=1e-4, help='learning rate for decoder.')
     parser.add_argument('--grad_clip', type=float, default=None, help='clip gradients at an absolute value of.')
