@@ -7,7 +7,7 @@ import os
 import torch.nn.functional as F
 
 class ClipEncoder(nn.Module):
-    def __init__(self, path = "/content/CLIPCap/RemoteCLIP-ViT-B-32.pt"):
+    def __init__(self, path = "/content/CLIPCap/RemoteCLIP.pt"):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         try:
