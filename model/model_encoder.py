@@ -254,9 +254,10 @@ class AttentiveEncoder(nn.Module):
     """
     One visual transformer block
     """
-    def __init__(self, n_layers, feature_size, heads, hidden_dim, attention_dim = 512, dropout = 0.):
+    def __init__(self, n_layers, feature_size, heads, hidden_dim, attention_dim = 512, dropout = 0., network = "resnet101"):
         super(AttentiveEncoder, self).__init__()
         h_feat, w_feat, channels = feature_size
+        self.network = network
         
         self.h_embedding = nn.Embedding(h_feat, int(channels/2))
         self.w_embedding = nn.Embedding(w_feat, int(channels/2))
