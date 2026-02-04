@@ -7,7 +7,7 @@ import os
 import torch.nn.functional as F
 
 class ClipEncoder(nn.Module):
-    def __init__(self, path = "/content/RemoteCLIP-ViT-B-32.pt"):
+    def __init__(self, path = "/content/CLIPCap/RemoteCLIP-ViT-B-32.pt"):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         try:
@@ -151,7 +151,7 @@ class Encoder(nn.Module):
             cnn = models.regnet_x_16gf(pretrained=True) 
             modules = list(cnn.children())[:-2]
         elif self.network=='clip':
-            clip = ClipEncoder("/content/RemoteCLIP-ViT-B-32.pt")
+            clip = ClipEncoder()
 
         if('clip' in self.network):
             self.model = clip

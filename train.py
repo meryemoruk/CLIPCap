@@ -213,7 +213,7 @@ def main(args):
             encoder_lr_scheduler.step()
             #print(encoder_optimizer.param_groups[0]['lr'])
         # Check if there was an improvement        
-        if  Bleu_4 > best_bleu4:
+        if(True):
             best_bleu4 = max(Bleu_4, best_bleu4)
             #save_checkpoint                
             print('Save Model')  
@@ -247,10 +247,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--gpu_id', type=int, default=0, help='gpu id in the training.')
     parser.add_argument('--checkpoint', default=None, help='path to checkpoint, None if none.')
-    parser.add_argument('--print_freq',type=int, default=100, help='print training/validation stats every __ batches')
+    parser.add_argument('--print_freq',type=int, default=50, help='print training/validation stats every __ batches')
     # Training parameters
     parser.add_argument('--fine_tune_encoder', type=bool, default=True, help='whether fine-tune encoder or not')    
-    parser.add_argument('--train_batchsize', type=int, default=256, help='batch_size for training')
+    parser.add_argument('--train_batchsize', type=int, default=16, help='batch_size for training')
     parser.add_argument('--network', default='resnet101', help='define the encoder to extract features')
     parser.add_argument('--encoder_dim',default=768, help='the dimension of extracted features using different network')
     parser.add_argument('--feat_size', default=16, help='define the output size of encoder to extract features')

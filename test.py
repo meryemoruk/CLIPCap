@@ -188,7 +188,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_length', type=int, default=41, help='path of the data lists')
     parser.add_argument('--allow_unk', type=int, default=1, help='path of the data lists')
     parser.add_argument('--data_name', default="LEVIR_CC",help='base name shared by data files.')
-    parser.add_argument('--checkpoint', default='LEVIR_CC_batchsize_32_resnet101.pth', help='path to checkpoint, None if none.')
+    parser.add_argument('--checkpoint', default='LEVIR_CC_batchsize_16_resnet101.pth', help='path to checkpoint, None if none.')
 
     #parser.add_argument('--data_folder', default='/root/Data/Dubai_CC/DubaiCC500impair/datasetDubaiCCPublic/imgs_tiles/RGB/',help='folder with data files')
     #parser.add_argument('--list_path', default='./data/Dubai_CC/', help='path of the data lists')
