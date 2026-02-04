@@ -71,8 +71,8 @@ class ClipEncoder(nn.Module):
         print(f"Transformer Blok Çıktısı: {raw_output.shape}")
         
         # Şekil Düzenleme: [Seq, Batch, Dim] -> [Batch, Seq, Dim]
-        if raw_output.shape[1] == 1: 
-            raw_output = raw_output.permute(1, 0, 2) # [1, 50, 768]
+        
+        raw_output = raw_output.permute(1, 0, 2) # [1, 50, 768]
         
         # KRİTİK ADIM: Hook'u ln_post öncesine attığımız için,
         # LayerNorm işlemini şimdi elle yapmalıyız. Yoksa veriler normalize olmaz.
