@@ -43,7 +43,8 @@ class ClipEncoder(nn.Module):
                 clean_state_dict[new_k] = v
             
             # Ağırlıkları Yükle (strict=False, versiyon farkı varsa patlamaması için)
-            self.model = self.model.load_state_dict(clean_state_dict, strict=False)
+            # DOĞRU: Sadece fonksiyonu çağır, atama yapma
+            self.model.load_state_dict(clean_state_dict, strict=False)
 
         else:
             print("UYARI: JIT dosyası bulunamadı, orijinal ağırlıklar kullanılıyor.")
