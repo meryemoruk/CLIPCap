@@ -32,7 +32,7 @@ def main(args):
         encoder_optimizer = torch.optim.Adam(params=encoder.parameters(),
                                             lr=args.encoder_lr) if args.fine_tune_encoder else None
         encoder_trans = AttentiveEncoder(n_layers =args.n_layers, feature_size=[args.feat_size, args.feat_size, args.encoder_dim], 
-                                            heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout)
+                                            heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout, network=args.network)
         encoder_trans_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()),
                                             lr=args.encoder_lr)
         decoder = DecoderTransformer(encoder_dim=args.encoder_dim, feature_dim=args.feature_dim, vocab_size=len(word_vocab), max_lengths=args.max_length, word_vocab=word_vocab, n_head=args.n_heads,
@@ -229,7 +229,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Remote_Sensing_Image_Changes_to_Captions')
 
     # Data parameters
-    parser.add_argument('--data_folder', default='/root/Data/LEVIR_CC/images',help='folder with data files')
+    parser.add_argument('--data_folder', default='./data/LEVIR_CC/images',help='folder with data files')
     parser.add_argument('--list_path', default='./data/LEVIR_CC/', help='path of the data lists')
     parser.add_argument('--token_folder', default='./data/LEVIR_CC/tokens/', help='folder with token files')
     parser.add_argument('--vocab_file', default='vocab', help='path of the data lists')

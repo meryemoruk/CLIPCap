@@ -2,6 +2,90 @@ import torch
 from torch import nn
 import torchvision.models as models
 from einops import rearrange
+import clip
+import os
+import torch.nn.functional as F
+
+class ClipEncoder(nn.Module):
+    def __init__(self, path = "/content/RemoteCLIP-ViT-B-32.pt"):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        try:
+            self.model, preprocess = clip.load("ViT-B/32", device=self.device, jit=False)
+        except AttributeError:
+            pass 
+
+        # ResNet (ImageNet) İstatistikleri
+        self.register_buffer('source_mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('source_std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+        # CLIP (OpenAI) İstatistikleri
+        self.register_buffer('target_mean', torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1))
+        self.register_buffer('target_std', torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1))
+
+        jit_path = path
+
+        if os.path.exists(jit_path):
+            print(f"JIT Model yükleniyor: {jit_path}")
+            model_jit = torch.jit.load(jit_path, map_location=self.device).eval()
+            jit_state_dict = model_jit.state_dict()
+            
+            # Fazlalık anahtarları temizle
+            keys_to_ignore = []
+            clean_state_dict = {k: v for k, v in jit_state_dict.items() if k not in keys_to_ignore}
+            
+            # Ağırlıkları yükle
+            self.model.load_state_dict(clean_state_dict, strict=True)
+            print("Ağırlıklar başarıyla transfer edildi!")
+        else:
+            print("UYARI: JIT dosyası bulunamadı, orijinal ağırlıklar kullanılıyor.")
+
+        # --- 3. DERİN HOOK MEKANİZMASI (ÇÖZÜM BURADA) ---
+        self.features = {}
+
+        def get_activation_deep(name):
+            def hook(model, input, output):
+                self.features[name] = output.detach().clone()
+            return hook
+
+        self.model.visual.transformer.resblocks[-1].register_forward_hook(get_activation_deep('last_block'))
+
+    def forward(self, img):
+
+        img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
+
+        # 1. Denormalize (ResNet -> Raw [0,1])
+        img = img * self.source_std + self.source_mean
+        
+        # 2. Normalize (Raw -> CLIP)
+        img = (img - self.target_mean) / self.target_std
+
+        self.feature = {}
+
+        with torch.no_grad():
+            _ = self.model.encode_image(img)
+            
+        # --- 5. Veriyi İşleme (Manuel Normalizasyon) ---
+        # Transformer çıktısı: [Seq_Len, Batch, Dim] -> Genelde [50, 1, 768]
+        raw_output = self.features['last_block']
+        print(f"Transformer Blok Çıktısı: {raw_output.shape}")
+        
+        # Şekil Düzenleme: [Seq, Batch, Dim] -> [Batch, Seq, Dim]
+        if raw_output.shape[1] == 1: 
+            raw_output = raw_output.permute(1, 0, 2) # [1, 50, 768]
+        
+        # KRİTİK ADIM: Hook'u ln_post öncesine attığımız için,
+        # LayerNorm işlemini şimdi elle yapmalıyız. Yoksa veriler normalize olmaz.
+        final_features = self.model.visual.ln_post(raw_output)
+
+        patch_tokens = final_features[:, 1:, :] 
+            
+        batch_size = patch_tokens.shape[0]     # 1
+        num_patches = patch_tokens.shape[1]    # 49 olmalı
+        embed_dim = patch_tokens.shape[2]      # 768
+        
+        grid_size = int(num_patches ** 0.5)    # 7
+
+        return patch_tokens.reshape(batch_size, grid_size, grid_size, embed_dim).permute(0, 3, 1, 2)
 
 class Encoder(nn.Module):
     """
@@ -66,11 +150,16 @@ class Encoder(nn.Module):
         elif self.network=='regnet_x_16gf': #2048,1/32H,1/32W
             cnn = models.regnet_x_16gf(pretrained=True) 
             modules = list(cnn.children())[:-2]
+        elif self.network=='clip':
+            clip = ClipEncoder()
 
-        self.cnn = nn.Sequential(*modules)
-        # Resize image to fixed size to allow input images of variable size
-        # self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
-        self.fine_tune()
+        if('clip' in self.network):
+            self.model = clip
+        else:
+            self.model = nn.Sequential(*modules)
+            # Resize image to fixed size to allow input images of variable size
+            # self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
+            self.fine_tune()
 
     def forward(self, imageA, imageB):
         """
@@ -79,8 +168,8 @@ class Encoder(nn.Module):
         :param images: images, a tensor of dimensions (batch_size, 3, image_size, image_size)
         :return: encoded images
         """
-        feat1 = self.cnn(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
-        feat2 = self.cnn(imageB)
+        feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
+        feat2 = self.model(imageB)
 
         return feat1, feat2
 
@@ -90,13 +179,12 @@ class Encoder(nn.Module):
 
         :param fine_tune: Allow?
         """
-        for p in self.cnn.parameters():
+        for p in self.model.parameters():
             p.requires_grad = False
         # If fine-tuning, only fine-tune convolutional blocks 2 through 4
-        for c in list(self.cnn.children())[5:]:
+        for c in list(self.model.children())[5:]:
             for p in c.parameters():
                 p.requires_grad = fine_tune
-
 
 class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout = 0.):

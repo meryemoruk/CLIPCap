@@ -31,10 +31,12 @@ def main(args):
     checkpoint = torch.load(snapshot_full_path)
     encoder = Encoder(args.network)
     encoder_trans = AttentiveEncoder(n_layers =args.n_layers, feature_size=[args.feat_size, args.feat_size, args.encoder_dim], 
-                    heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout)
+                    heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout, network=args.network)
     decoder = DecoderTransformer(encoder_dim=args.encoder_dim, feature_dim=args.feature_dim, vocab_size=len(word_vocab), max_lengths=args.max_length, word_vocab=word_vocab, n_head=args.n_heads,
                     n_layers= args.decoder_n_layers, dropout=args.dropout)
-    encoder.load_state_dict(checkpoint['encoder_dict'])
+    
+    if(False): # skipping encoder load..
+        encoder.load_state_dict(checkpoint['encoder_dict'])
     encoder_trans.load_state_dict(checkpoint['encoder_trans_dict'])
     decoder.load_state_dict(checkpoint['decoder_dict'])
     # Move to GPU, if available
@@ -179,7 +181,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Remote_Sensing_Image_Change_Captioning')
 
     # Data parameters
-    parser.add_argument('--data_folder', default='/root/Data/LEVIR_CC/images',help='folder with data files')
+    parser.add_argument('--data_folder', default='./data/LEVIR_CC/images',help='folder with data files')
     parser.add_argument('--list_path', default='./data/LEVIR_CC/', help='path of the data lists')
     parser.add_argument('--token_folder', default='./data/LEVIR_CC/tokens/', help='folder with token files')
     parser.add_argument('--vocab_file', default='vocab', help='path of the data lists')
