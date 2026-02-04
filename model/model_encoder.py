@@ -151,7 +151,7 @@ class Encoder(nn.Module):
             cnn = models.regnet_x_16gf(pretrained=True) 
             modules = list(cnn.children())[:-2]
         elif self.network=='clip':
-            clip = ClipEncoder()
+            clip = ClipEncoder("/content/RemoteCLIP-ViT-B-32.pt")
 
         if('clip' in self.network):
             self.model = clip
