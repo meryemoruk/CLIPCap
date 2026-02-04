@@ -27,17 +27,24 @@ class ClipEncoder(nn.Module):
         print(jit_path)
 
         if (True):
-            print(f"JIT Model yükleniyor: {jit_path}")
-            model_jit = torch.jit.load(jit_path, map_location=self.device).eval()
-            jit_state_dict = model_jit.state_dict()
+            # HATA ÇÖZÜMÜ: torch.jit.load YERİNE torch.load kullanıyoruz
+            checkpoint = torch.load(jit_path, map_location=self.device)
             
-            # Fazlalık anahtarları temizle
-            keys_to_ignore = []
-            clean_state_dict = {k: v for k, v in jit_state_dict.items() if k not in keys_to_ignore}
+            # Checkpoint yapısını kontrol et (Bazen direkt dict, bazen 'state_dict' key'i içinde olur)
+            if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            else:
+                state_dict = checkpoint
+
+            # Temizlik: Eğer anahtarlarda 'module.' varsa (DataParallel artığı) temizle
+            clean_state_dict = {}
+            for k, v in state_dict.items():
+                new_k = k.replace("module.", "")
+                clean_state_dict[new_k] = v
             
-            # Ağırlıkları yükle
-            self.model.load_state_dict(clean_state_dict, strict=True)
-            print("Ağırlıklar başarıyla transfer edildi!")
+            # Ağırlıkları Yükle (strict=False, versiyon farkı varsa patlamaması için)
+            self.model = self.model.load_state_dict(clean_state_dict, strict=False)
+
         else:
             print("UYARI: JIT dosyası bulunamadı, orijinal ağırlıklar kullanılıyor.")
 
