@@ -24,6 +24,7 @@ class ClipEncoder(nn.Module):
         self.register_buffer('target_std', torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1))
 
         jit_path = path
+        print(jit_path)
 
         if os.path.exists(jit_path):
             print(f"JIT Model yükleniyor: {jit_path}")
