@@ -68,7 +68,6 @@ class ClipEncoder(nn.Module):
         # --- 5. Veriyi İşleme (Manuel Normalizasyon) ---
         # Transformer çıktısı: [Seq_Len, Batch, Dim] -> Genelde [50, 1, 768]
         raw_output = self.features['last_block']
-        print(f"Transformer Blok Çıktısı: {raw_output.shape}")
         
         # Şekil Düzenleme: [Seq, Batch, Dim] -> [Batch, Seq, Dim]
         
