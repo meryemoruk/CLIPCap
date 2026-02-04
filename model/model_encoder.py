@@ -26,7 +26,7 @@ class ClipEncoder(nn.Module):
         jit_path = path
         print(jit_path)
 
-        if os.path.exists(jit_path):
+        if (True):
             print(f"JIT Model yükleniyor: {jit_path}")
             model_jit = torch.jit.load(jit_path, map_location=self.device).eval()
             jit_state_dict = model_jit.state_dict()
