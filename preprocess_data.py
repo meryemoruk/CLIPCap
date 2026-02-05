@@ -31,6 +31,13 @@ def main(args):
         input_vocab_json = ''
         output_vocab_json = 'vocab.json'
         save_dir = './data/Dubai_CC/'
+    elif args.dataset == 'SECOND_CC':
+        input_captions_json = args.data_folder + '/SECOND-CC-AUG.json'
+        input_image_dir = args.data_folder + ''
+        input_vocab_json = ''
+        output_vocab_json = 'vocab.json'
+        save_dir = './data/SECOND_CC'
+    
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     if not os.path.exists(os.path.join(save_dir + 'tokens/')):
