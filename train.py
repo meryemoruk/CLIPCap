@@ -8,6 +8,7 @@ import argparse
 import json
 #import torchvision.transforms as transforms
 from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
+from data.SECOND_CC.SECONDCC import SECONDCCDataset
 from data.Dubai_CC.DubaiCC import DubaiCCDataset
 from model.model_encoder import Encoder, AttentiveEncoder
 from model.model_decoder import DecoderTransformer
@@ -17,6 +18,11 @@ def main(args):
     """
     Training and validation.
     """
+
+    args.data_folder = './data/' + args.data_name + '/images'
+    args.token_folder = './data/' + args.data_name + '/tokens'
+    args.list_path = './data/' + args.data_name 
+
     os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)  
     if os.path.exists(args.savepath)==False:
@@ -68,12 +74,20 @@ def main(args):
         val_loader = data.DataLoader(
             LEVIRCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
+    
     elif args.data_name == 'Dubai_CC':
         train_loader = data.DataLoader(
             DubaiCCDataset(args.data_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.train_batchsize, shuffle=True, num_workers=args.workers, pin_memory=True)
         val_loader = data.DataLoader(
             DubaiCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
+    elif args.data_name == 'SECOND_CC':
+        train_loader = data.DataLoader(
+            SecondCCDataset(args.data_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            batch_size=args.train_batchsize, shuffle=True, num_workers=args.workers, pin_memory=True)
+        val_loader = data.DataLoader(
+            SecondCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     
     encoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=5, gamma=0.5) if args.fine_tune_encoder else None
