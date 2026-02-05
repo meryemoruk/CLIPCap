@@ -36,7 +36,7 @@ def main(args):
         input_image_dir = args.data_folder + ''
         input_vocab_json = ''
         output_vocab_json = 'vocab.json'
-        save_dir = './data/SECOND_CC'
+        save_dir = './data/SECOND_CC/'
     
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
