@@ -17,6 +17,9 @@ SPECIAL_TOKENS = {
 }
 
 def main(args):
+
+    args.data_folder = "./data/" + args.dataset
+    
     # Yol tanımlamaları
     if args.dataset == 'LEVIR_CC':
         input_captions_json = os.path.join(args.data_folder, 'LevirCCcaptions.json')
