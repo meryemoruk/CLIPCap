@@ -8,6 +8,7 @@ import json
 #import torchvision.transforms as transforms
 from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
 from data.Dubai_CC.DubaiCC import DubaiCCDataset
+from data.SECOND_CC.SECONDCC import SECONDCCDataset
 from model.model_encoder import Encoder, AttentiveEncoder
 from model.model_decoder import DecoderTransformer
 from utils import *
@@ -53,7 +54,7 @@ def main(args):
     decoder = decoder.cuda()
 
     # Custom dataloaders
-    if args.data_name == 'LEVIR_CC' or 'SECOND_CC':
+    if args.data_name == 'LEVIR_CC':
         #LEVIR:
         nochange_list = ["the scene is the same as before ", "there is no difference ",
                          "the two scenes seem identical ", "no change has occurred ",
@@ -71,6 +72,16 @@ def main(args):
         test_loader = data.DataLoader(
             DubaiCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.test_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
+    if args.data_name == 'SECOND_CC':
+        #LEVIR:
+        nochange_list = ["the scene is the same as before ", "there is no difference ",
+                         "the two scenes seem identical ", "no change has occurred ",
+                         "almost nothing has changed "]
+        test_loader = data.DataLoader(
+            SECONDCCDataset(args.data_folder, args.list_path, 'test', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            batch_size=args.test_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
+
+    
     l_resize1 = torch.nn.Upsample(size = (256, 256), mode ='bilinear', align_corners = True)
     l_resize2 = torch.nn.Upsample(size = (256, 256), mode ='bilinear', align_corners = True)
     # Epochs
