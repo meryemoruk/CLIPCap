@@ -23,7 +23,7 @@ def main(args):
     args.data_folder = './data/' + args.data_name + '/images/'
     args.token_folder = './data/' + args.data_name + '/tokens/'
     args.list_path = './data/' + args.data_name + '/'
-    
+
     os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)  
     if os.path.exists(args.savepath)==False:
@@ -53,7 +53,7 @@ def main(args):
     decoder = decoder.cuda()
 
     # Custom dataloaders
-    if args.data_name == 'LEVIR_CC':
+    if args.data_name == 'LEVIR_CC' or 'SECOND_CC':
         #LEVIR:
         nochange_list = ["the scene is the same as before ", "there is no difference ",
                          "the two scenes seem identical ", "no change has occurred ",
