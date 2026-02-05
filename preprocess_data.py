@@ -45,7 +45,7 @@ def main(args):
     print('Loading captions')
     assert args.dataset in {'LEVIR_CC', 'Dubai_CC', 'SECOND_CC'}
 
-    if args.dataset == 'LEVIR_CC' or 'SECOND_CC':
+    if args.dataset == 'LEVIR_CC' or args.dataset == 'SECOND_CC':
         with open(input_captions_json, 'r') as f:
             data = json.load(f)
         # Read image paths and captions for each image
