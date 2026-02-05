@@ -43,7 +43,7 @@ def main(args):
     if not os.path.exists(os.path.join(save_dir + 'tokens/')):
         os.makedirs(os.path.join(save_dir + 'tokens/'))
     print('Loading captions')
-    assert args.dataset in {'LEVIR_CC', 'Dubai_CC'}
+    assert args.dataset in {'LEVIR_CC', 'Dubai_CC', 'SECOND-CC'}
 
     if args.dataset == 'LEVIR_CC':
         with open(input_captions_json, 'r') as f:
