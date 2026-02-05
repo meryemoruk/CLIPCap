@@ -6,8 +6,6 @@ import argparse
 import numpy as np
 
 parser = argparse.ArgumentParser()
-#parser.add_argument('--dataset', type = str, default = 'Dubai_CC', help= 'the name of the dataset')
-#parser.add_argument('--word_count_threshold', default=0, type=int)
 parser.add_argument('--dataset', type = str, default = 'LEVIR_CC', help= 'the name of the dataset')
 parser.add_argument('--word_count_threshold', default=5, type=int)
 
@@ -19,44 +17,43 @@ SPECIAL_TOKENS = {
 }
 
 def main(args):
+    # Yol tanımlamaları
     if args.dataset == 'LEVIR_CC':
-        input_captions_json = args.data_folder + '/LevirCCcaptions.json'
-        input_image_dir = args.data_folder + '/images'
-        input_vocab_json = ''
-        output_vocab_json = 'vocab.json'
+        input_captions_json = os.path.join(args.data_folder, 'LevirCCcaptions.json')
         save_dir = './data/LEVIR_CC/'
     elif args.dataset == 'Dubai_CC':
+        # Dubai yollarını gerekirse buraya göre düzenleyin
         input_captions_json = '/root/Data/Dubai_CC/DubaiCC500impair/datasetDubaiCCPublic/description_jsontr_te_val/'
-        input_image_dir = '/root/Data/Dubai_CC/DubaiCC500impair/datasetDubaiCCPublic/RGB'
-        input_vocab_json = ''
-        output_vocab_json = 'vocab.json'
         save_dir = './data/Dubai_CC/'
     elif args.dataset == 'SECOND_CC':
-        input_captions_json = args.data_folder + '/SECOND-CC-AUG.json'
-        input_image_dir = args.data_folder + ''
-        input_vocab_json = ''
-        output_vocab_json = 'vocab.json'
+        input_captions_json = os.path.join(args.data_folder, 'SECOND-CC-AUG.json')
         save_dir = './data/SECOND_CC/'
     
+    output_vocab_json = 'vocab.json'
+    
+    # Klasör oluşturma
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    if not os.path.exists(os.path.join(save_dir + 'tokens/')):
-        os.makedirs(os.path.join(save_dir + 'tokens/'))
-    print('Loading captions')
+    if not os.path.exists(os.path.join(save_dir, 'tokens/')):
+        os.makedirs(os.path.join(save_dir, 'tokens/'))
+        
+    print(f'Loading captions for {args.dataset}...')
     assert args.dataset in {'LEVIR_CC', 'Dubai_CC', 'SECOND_CC'}
 
+    # LEVIR ve SECOND İşleme Bloğu
     if args.dataset == 'LEVIR_CC' or args.dataset == 'SECOND_CC':
         with open(input_captions_json, 'r') as f:
             data = json.load(f)
-        # Read image paths and captions for each image
+            
         max_length = -1
-        all_cap_tokens = []
+        all_cap_tokens = [] # (filename, tokens, split_name) saklayacak
+
         for img in data['images']:
             captions = []    
             for c in img['sentences']:
-                # Update word frequency
                 assert len(c['raw']) > 0, 'error: some image has no caption'
                 captions.append(c['raw'])
+            
             tokens_list = []
             for cap in captions:
                 cap_tokens = tokenize(cap,
@@ -66,47 +63,66 @@ def main(args):
                                     punct_to_remove=['?', '.'])
                 tokens_list.append(cap_tokens)
                 max_length = max(max_length, len(cap_tokens))
-            all_cap_tokens.append((img['filename'], tokens_list))
+            
+            # --- SPLIT (TRAIN/VAL/TEST) BELİRLEME MANTIĞI ---
+            # 1. Önce JSON içinde 'split' anahtarı var mı bak (SECOND_CC genelde bunu kullanır)
+            split_name = img.get('split')
+            
+            # 2. Eğer JSON'da yoksa, Dosya isminden anlamaya çalış (LEVIR_CC stili: train_xxxx.png)
+            if not split_name:
+                filename_prefix = img['filename'].split('_')[0]
+                if filename_prefix in ['train', 'val', 'test']:
+                    split_name = filename_prefix
+                else:
+                    # SECOND_CC için dosya isminde train yazmıyorsa ve JSON'da da yoksa,
+                    # Varsayılan olarak 'train' kabul edilebilir veya hata basılabilir.
+                    # Genelde SECOND JSON'larında split bilgisi olur.
+                    # Fallback:
+                    split_name = 'train' 
 
-        # Then save the tokenized captions in txt
-        print('Saving captions')
-        for img, tokens_list in all_cap_tokens:
-            i = img.split('.')[0]
+            # Veriyi listeye ekle
+            all_cap_tokens.append((img['filename'], tokens_list, split_name))
+
+        # Dosyaları Yazma
+        print('Saving captions and split lists...')
+        
+        # Dosyaları sıfırdan açalım (append yerine write modu ile temizleyelim)
+        f_train = open(os.path.join(save_dir, 'train.txt'), 'w')
+        f_val = open(os.path.join(save_dir, 'val.txt'), 'w')
+        f_test = open(os.path.join(save_dir, 'test.txt'), 'w')
+
+        for img_name, tokens_list, split_name in all_cap_tokens:
+            # Token dosyasını kaydet
+            name_base = img_name.split('.')[0] # Uzantıyı at
+            tokens_json = json.dumps(tokens_list)
+            
+            with open(os.path.join(save_dir, 'tokens', name_base + '.txt'), 'w') as f:
+                f.write(tokens_json)
+
             token_len = len(tokens_list)
-            tokens_list = json.dumps(tokens_list)
-            f = open(os.path.join(save_dir + 'tokens/' + i + '.txt'), 'w')
-            f.write(tokens_list)
-            f.close()
 
-
-        #Considering each image pair has 5 annotations, two strategies can be adopted to generate list for training:
-        # a: creating training list with a self-defined token_id[0:4], each token list corresponds to specific captions;
-        # or b: randomly select one of the five captions during training;
-          
-        #    if i.split('_')[0] == 'train':
-        #        f = open(os.path.join(save_dir + 'train' + '.txt'), 'a')
-        #        f.write(img + '\n')
-        #        f.close
-
-            if i.split('_')[0] == 'train':
-                f = open(os.path.join(save_dir + 'train' + '.txt'), 'a')
+            # Listelere yazma
+            if split_name == 'train':
+                # Train için her caption varyasyonu kadar satır ekle (Data Augmentation mantığı)
                 for j in range(token_len):
-                    f.write(img + '-' + str(j) + '\n')
-                f.close
+                    f_train.write(img_name + '-' + str(j) + '\n')
+            
+            elif split_name == 'val':
+                f_val.write(img_name + '\n')
+            
+            elif split_name == 'test':
+                f_test.write(img_name + '\n')
 
-            elif i.split('_')[0] == 'val':
-                f = open(os.path.join(save_dir + 'val' + '.txt'), 'a')
-                f.write(img + '\n')
-                f.close()
-            elif i.split('_')[0] == 'test':
-                f = open(os.path.join(save_dir + 'test' + '.txt'), 'a')
-                f.write(img + '\n')
-                f.close()     
+        # Dosyaları kapat
+        f_train.close()
+        f_val.close()
+        f_test.close()
 
+    # Dubai CC Bloğu (Orijinal hali korundu)
     elif args.dataset == 'Dubai_CC': 
         filename = os.listdir(input_captions_json)
         max_length = -1
-        all_cap_tokens = []
+        all_cap_tokens = [] # Dubai için sadece (filename, tokens) tutuluyor, split zaten dosya adında
 
         for j in range(len(filename)):
             s_cap_tokens = []      
@@ -116,7 +132,6 @@ def main(args):
             for img in data['images']:
                 captions = []
                 for c in img['sentences']:
-                    # Update word frequency
                     assert len(c['raw']) > 0, 'error: some image has no caption'
                     captions.append(c['raw'])
                 tokens_list = []  
@@ -130,57 +145,57 @@ def main(args):
                     max_length = max(max_length, len(cap_tokens))
                 s_cap_tokens.append((img['filename'], tokens_list))
                 all_cap_tokens.append((img['filename'], tokens_list))
-            # Then save the tokenized captions in txt
-            print('Saving captions')
+            
+            print(f'Saving captions for part {filename[j]}')
+            
+            # Dosya yazma modu 'a' (append) çünkü döngü içindeyiz
+            # Ancak her çalıştırmada temizlenmesi iyi olurdu, burada orijinal mantığı koruyoruz.
+            
             for img, tokens_list in s_cap_tokens:
                 i = img.split('.')[0]
                 token_len = len(tokens_list)
-                tokens_list = json.dumps(tokens_list)
-                f = open(os.path.join(save_dir + 'tokens/' + i + '.txt'), 'w')
-                f.write(tokens_list)
-                f.close()     
+                tokens_list_json = json.dumps(tokens_list)
+                
+                with open(os.path.join(save_dir, 'tokens', i + '.txt'), 'w') as f:
+                    f.write(tokens_list_json)
 
-                #if filename[j].split('_')[0] == 'Train':
-                #    f = open(os.path.join(save_dir + 'train' + '.txt'), 'a')
-                #    f.write(img + '\n')
-                #    f.close
+                # Dubai dosya ismi kontrolü (Train_xxxx.json gibi)
+                split_prefix = filename[j].split('_')[0]
+                
+                if split_prefix == 'Train':
+                    with open(os.path.join(save_dir, 'train.txt'), 'a') as f:
+                        for s in range(token_len):
+                            f.write(img + '-' + str(s) + '\n')
 
-                if filename[j].split('_')[0] == 'Train':
-                    f = open(os.path.join(save_dir + 'train' + '.txt'), 'a')
-                    for s in range(token_len):
-                        f.write(img + '-' + str(s) + '\n')
-                    f.close
-
-                elif filename[j].split('_')[0] == 'Validation':
-                    f = open(os.path.join(save_dir + 'val' + '.txt'), 'a')
-                    f.write(img + '\n')
-                    f.close()
-                elif filename[j].split('_')[0] == 'Test':
-                    f = open(os.path.join(save_dir + 'test' + '.txt'), 'a')
-                    f.write(img + '\n')
-                    f.close()   
+                elif split_prefix == 'Validation':
+                    with open(os.path.join(save_dir, 'val.txt'), 'a') as f:
+                        f.write(img + '\n')
+                        
+                elif split_prefix == 'Test':
+                    with open(os.path.join(save_dir, 'test.txt'), 'a') as f:
+                        f.write(img + '\n')
 
     print('max_length of the dataset:', max_length)
-    # Either create the vocab or load it from disk
-    if input_vocab_json == '':
-        print('Building vocab')
-        word_freq = build_vocab(all_cap_tokens,args.word_count_threshold)
+    
+    # Vocab Oluşturma
+    if args.dataset == 'LEVIR_CC' or args.dataset == 'SECOND_CC':
+        # Tuple yapısı değiştiği için (filename, tokens, split) -> (filename, tokens) formatına çevir
+        vocab_input = [(x[0], x[1]) for x in all_cap_tokens]
+        print('Building vocab...')
+        word_freq = build_vocab(vocab_input, args.word_count_threshold)
     else:
-        print('Loading vocab')
-        with open(input_vocab_json, 'r') as f:
-            word_freq = json.load(f)
-    if output_vocab_json != '':
-        with open(os.path.join(save_dir + output_vocab_json), 'w') as f:
-            json.dump(word_freq, f)
+        # Dubai zaten eski formatta
+        print('Building vocab...')
+        word_freq = build_vocab(all_cap_tokens, args.word_count_threshold)
+
+    with open(os.path.join(save_dir, output_vocab_json), 'w') as f:
+        json.dump(word_freq, f)
+    
+    print("Pre-processing completed successfully!")
 
 
 def tokenize(s, delim=' ',add_start_token=True, 
     add_end_token=True,punct_to_keep=None, punct_to_remove=None):
-    """
-    Tokenize a sequence, converting a string s into a list of (string) tokens by
-    splitting on the specified delimiter. Optionally keep or remove certain
-    punctuation marks and add start and end tokens.
-    """
     if punct_to_keep is not None:
         for p in punct_to_keep:
             s = s.replace(p, '%s%s' % (delim, p))
@@ -190,20 +205,16 @@ def tokenize(s, delim=' ',add_start_token=True,
             s = s.replace(p, '')
 
     tokens = s.split(delim)
-    for q in tokens:
-        if q == '':
-            tokens.remove(q)
-    if tokens[0] == '':
-        tokens.remove(tokens[0])
-    if tokens[-1] == '':
-        tokens.remove(tokens[-1])
+    # Temizlik
+    tokens = [q for q in tokens if q != '']
+    
     if add_start_token:
         tokens.insert(0, '<START>')
     if add_end_token:
         tokens.append('<END>')
     return tokens
 
-def build_vocab(sequences, min_token_count=1):#Calculate the number of independent words and tokenize vocab
+def build_vocab(sequences, min_token_count=1):
     token_to_count = {}
     for it in sequences:
         for seq in it[1]:
@@ -237,10 +248,10 @@ def encode(seq_tokens, token_to_idx, allow_unk=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Remote_Sensing_Image_Changes_to_Captions')
 
-    parser.add_argument('--data_folder', default='./data/LEVIR_CC',help='folder with data files')
-    parser.add_argument('--dataset', default='LEVIR_CC',help='folder with data files')
+    # Varsayılan yolu kendi colab/local yolunuza göre güncelleyebilirsiniz
+    parser.add_argument('--data_folder', default='./data/LEVIR_CC', help='folder with data files')
+    parser.add_argument('--dataset', default='LEVIR_CC', help='dataset name: LEVIR_CC, SECOND_CC, Dubai_CC')
     parser.add_argument('--word_count_threshold', default=5, type=int, help='word threshold')
 
     args = parser.parse_args()
     main(args)
-
