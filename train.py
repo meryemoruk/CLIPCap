@@ -21,7 +21,7 @@ def main(args):
 
     args.data_folder = './data/' + args.data_name + '/images/'
     args.token_folder = './data/' + args.data_name + '/tokens/'
-    args.list_path = './data/' + args.data_name + '/'
+    args.list_path = './data/' + args.data_name 
 
     os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)  
