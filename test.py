@@ -109,7 +109,7 @@ def main(args):
             if encoder is not None:
                 feat1, feat2 = encoder(imgA, imgB)
             feat1, feat2 = encoder_trans(feat1, feat2)
-            seq = decoder.sample(feat1, feat2)
+            seq = decoder.sample(feat1, feat2, args.beam_size)
 
             img_token = token_all.tolist()
             img_tokens = list(map(lambda c: [w for w in c if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}],
@@ -231,6 +231,8 @@ if __name__ == '__main__':
     # Test
     parser.add_argument('--test_batchsize', default=1, help='batch_size for validation')
     parser.add_argument('--savepath', default="./models_checkpoint/")
+
+    parser.add_argument('--beam_size', type=int, default=1)
     
     args = parser.parse_args()
     main(args)
