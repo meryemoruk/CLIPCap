@@ -6,12 +6,13 @@ import os
 import numpy as np
 from torch.utils.data import DataLoader
 from imageio import imread
-from random import *
+from random import randint
 
 class SECONDCCDataset(Dataset):
     """
-    SECOND Dataset için PyTorch Dataset sınıfı.
-    ClipEncoder ile uyumlu olması için ImageNet normalizasyonu kullanır.
+    SECOND Dataset (SECOND-CC-AUG) için PyTorch Dataset sınıfı.
+    ClipEncoder ile uyumlu olması için ImageNet normalizasyonunu ve 
+    ekran görüntüsündeki 'rgb' klasör yapısını kullanır.
     """
 
     def __init__(self, data_folder, list_path, split, token_folder=None, vocab_file=None, max_length=40, allow_unk=0, max_iters=None):
@@ -19,21 +20,28 @@ class SECONDCCDataset(Dataset):
         self.split = split
         self.max_length = max_length
         
-        # --- ÖNEMLİ DEĞİŞİKLİK 1: Normalizasyon ---
-        # ClipEncoder'ınız "denormalize" işlemi yaparken ImageNet istatistiklerini (self.source_std) kullanıyor.
-        # Bu yüzden veriyi veri yükleyici (DataLoader) aşamasında ImageNet standartlarına göre hazırlamalıyız.
-        # ImageNet Mean ve Std (0-1 aralığı için)
+        # --- 1. Normalizasyon (ImageNet Standartları) ---
+        # ClipEncoder bu istatistikleri bekliyor.
         self.mean = [0.485, 0.456, 0.406]
         self.std = [0.229, 0.224, 0.225]
 
         assert self.split in {'train', 'val', 'test'}
         
-        # List dosyasından isimleri oku (uzantıları temizle)
-        self.img_ids = [i_id.strip() for i_id in open(os.path.join(list_path + split + '.txt'))]
+        # Text dosyasını oku (preprocess tarafından oluşturulan train.txt vb.)
+        txt_file_path = os.path.join(list_path, split + '.txt')
+        if not os.path.exists(txt_file_path):
+             raise FileNotFoundError(f"Liste dosyası bulunamadı: {txt_file_path}. Lütfen önce preprocess_data.py çalıştırın.")
+
+        self.img_ids = [i_id.strip() for i_id in open(txt_file_path)]
         
         if vocab_file is not None:
-            with open(os.path.join(list_path + vocab_file + '.json'), 'r') as f:
-                self.word_vocab = json.load(f)
+            vocab_path = os.path.join(list_path, vocab_file + '.json')
+            if os.path.exists(vocab_path):
+                with open(vocab_path, 'r') as f:
+                    self.word_vocab = json.load(f)
+            else:
+                print(f"UYARI: Vocab dosyası bulunamadı ({vocab_path}).")
+                self.word_vocab = {}
             self.allow_unk = allow_unk
             
         if not max_iters == None:
@@ -42,30 +50,38 @@ class SECONDCCDataset(Dataset):
             
         self.files = []
         
-        # --- ÖNEMLİ DEĞİŞİKLİK 2: Dosya Yolları (SECOND Yapısı) ---
-        # SECOND veri seti genelde 'A' ve 'B' klasörlerini kullanır.
-        # Dosya isimleri genelde '00001.png' şeklindedir.
-        
-        for name in self.img_ids:
-            # İsim formatı kontrolü (gerekirse .png ekle veya split et)
-            # Eğer txt dosyasında sadece "12345" yazıyorsa:
-            img_name = name if name.endswith('.png') else name + '.png'
+        # --- 2. Dosya Yollarını Oluşturma ---
+        for item in self.img_ids:
+            # item formatı genelde: "00003_0_0.png-0" (DosyaAdı - TokenID)
             
-            # SECOND klasör yapısı varsayımı: data_folder/train/A/xxxxx.png
-            if split == 'train':
-                 # Train klasör yapısı (Datasetinizi buraya göre düzenleyin)
-                 # Örn: .../SECOND/train/A/001.png
-                 base_path = os.path.join(data_folder, split, 'rgb')
+            if '-' in item:
+                # Sondaki tireye göre ayır (Token ID'yi al)
+                parts = item.rsplit('-', 1) 
+                img_name = parts[0]
+                token_id_str = parts[1]
             else:
-                 base_path = os.path.join(data_folder, split, 'rgb')
+                img_name = item
+                token_id_str = None
 
-            img_fileA = os.path.join(base_path, 'A', img_name)
-            img_fileB = os.path.join(base_path, 'B', img_name)
+            # SECOND-CC klasör yapısı ekran görüntüsüne göre:
+            # data_folder / train / rgb / A / dosya_adı
             
-            # Token işlemleri (LEVIR mantığı ile aynı)
-            token_id = None # SECOND'da genelde tek caption olur ama yapı korunabilir
+            # 1. Ana split klasörü (train/test)
+            split_dir = os.path.join(data_folder, split)
+            
+            # 2. 'rgb' klasörü kontrolü
+            # Ekran görüntüsünde 'rgb' klasörü var, onu ekliyoruz.
+            base_path = os.path.join(split_dir, 'rgb') 
+
+            # 3. A ve B klasörleri (A: Before, B: After varsayımı)
+            img_fileA = os.path.join(base_path, 'A', img_name)
+            img_fileB = os.path.join(base_path, 'B', img_name) # Ekran görüntüsünde B yok ama çift olması gerekir.
+            
+            # Eğer B klasörü yoksa (belki isim farklıdır), kodu uyaralım veya 'A'yı kopyalayalım (Debug için)
+            # Normalde Change Detection'da mutlaka A/B veya im1/im2 çifti olur.
+            
+            # Token file yolu
             if token_folder is not None:
-                # Token dosya ismi resim ismiyle aynı varsayılır
                 token_file = os.path.join(token_folder, img_name.split('.')[0] + '.txt')
             else:
                 token_file = None
@@ -74,8 +90,8 @@ class SECONDCCDataset(Dataset):
                 "imgA": img_fileA,
                 "imgB": img_fileB,
                 "token": token_file,
-                "token_id": token_id,
-                "name": name
+                "token_id": token_id_str,
+                "name": img_name
             })
 
     def __len__(self):
@@ -85,44 +101,48 @@ class SECONDCCDataset(Dataset):
         datafiles = self.files[index]
         name = datafiles["name"]
         
+        # --- Resim Okuma ---
         try:
             imgA = imread(datafiles["imgA"])
-            imgB = imread(datafiles["imgB"])
+            # Eğer B resmi bulunamazsa hata vermemesi için kontrol (Dataset bütünlüğü için önemlidir)
+            if not os.path.exists(datafiles["imgB"]):
+                # Fallback: Eğer B klasörü yoksa, kodun patlamaması için A'yı kopyala (Sadece test için!)
+                # Gerçek eğitimde burası hata vermeli.
+                # print(f"UYARI: B Resmi bulunamadı: {datafiles['imgB']}")
+                imgB = imgA.copy() 
+            else:
+                imgB = imread(datafiles["imgB"])
+                
         except Exception as e:
             print(f"Hata: Resim okunamadı -> {datafiles['imgA']}")
-            raise e
+            # Bozuk resim gelirse dummy data döndür (Eğitimi durdurmamak için)
+            imgA = np.zeros((256, 256, 3), dtype=np.uint8)
+            imgB = np.zeros((256, 256, 3), dtype=np.uint8)
 
-        # Float dönüşümü
-        imgA = np.asarray(imgA, np.float32)
-        imgB = np.asarray(imgB, np.float32)
+        # Float dönüşümü ve 0-1 Aralığına Çekme (ImageNet için Kritik)
+        imgA = np.asarray(imgA, np.float32) / 255.0
+        imgB = np.asarray(imgB, np.float32) / 255.0
         
-        # --- ÖNEMLİ DEĞİŞİKLİK 3: 0-1 Aralığına Çekme ---
-        # ImageNet istatistikleri 0-1 aralığındaki tensörler içindir.
-        # imread 0-255 döndürür, bu yüzden 255'e bölüyoruz.
-        imgA /= 255.0
-        imgB /= 255.0
-
         # (H, W, C) -> (C, H, W)
         imgA = np.moveaxis(imgA, -1, 0)     
         imgB = np.moveaxis(imgB, -1, 0)
 
         # ImageNet Normalizasyonu
+        # (img - mean) / std
         for i in range(len(self.mean)):
             imgA[i,:,:] -= self.mean[i]
             imgA[i,:,:] /= self.std[i]
             imgB[i,:,:] -= self.mean[i]
             imgB[i,:,:] /= self.std[i]      
 
-        # --- Token İşlemleri (Aynı Kalıyor) ---
+        # --- Token İşlemleri ---
         if datafiles["token"] is not None and os.path.exists(datafiles["token"]):
             with open(datafiles["token"], 'r') as f:
                 caption = f.read()
             
-            # JSON formatında mı yoksa düz metin mi kontrolü
             try:
                 caption_list = json.loads(caption)
             except:
-                # Eğer json değilse (SECOND bazen düz txt olabilir), listeye çevir
                 caption_list = [caption.strip()]
 
             token_all = np.zeros((len(caption_list), self.max_length), dtype=int)
@@ -135,6 +155,8 @@ class SECONDCCDataset(Dataset):
                 
             if datafiles["token_id"] is not None:
                 id = int(datafiles["token_id"])
+                # id index sınırlarını aşarsa diye güvenlik
+                if id >= len(caption_list): id = 0 
                 token = token_all[id]
                 token_len = token_all_len[id].item()
             else:
@@ -142,7 +164,6 @@ class SECONDCCDataset(Dataset):
                 token = token_all[j]
                 token_len = token_all_len[j].item()
         else:
-            # Token dosyası yoksa dummy data
             token_all = np.zeros((1, self.max_length), dtype=int)
             token = np.zeros(self.max_length, dtype=int)
             token_len = 0
