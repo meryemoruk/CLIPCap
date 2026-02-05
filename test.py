@@ -41,8 +41,7 @@ def main(args):
     decoder = DecoderTransformer(encoder_dim=args.encoder_dim, feature_dim=args.feature_dim, vocab_size=len(word_vocab), max_lengths=args.max_length, word_vocab=word_vocab, n_head=args.n_heads,
                     n_layers= args.decoder_n_layers, dropout=args.dropout)
     
-    if(False): # skipping encoder load..
-        encoder.load_state_dict(checkpoint['encoder_dict'])
+    encoder.load_state_dict(checkpoint['encoder_dict'])
     encoder_trans.load_state_dict(checkpoint['encoder_trans_dict'])
     decoder.load_state_dict(checkpoint['decoder_dict'])
     # Move to GPU, if available
