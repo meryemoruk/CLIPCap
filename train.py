@@ -84,10 +84,10 @@ def main(args):
             batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     elif args.data_name == 'SECOND_CC':
         train_loader = data.DataLoader(
-            SecondCCDataset(args.data_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            SECONDCCDataset(args.data_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.train_batchsize, shuffle=True, num_workers=args.workers, pin_memory=True)
         val_loader = data.DataLoader(
-            SecondCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            SECONDCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     
     encoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=5, gamma=0.5) if args.fine_tune_encoder else None
