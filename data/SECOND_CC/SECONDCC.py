@@ -7,12 +7,15 @@ import numpy as np
 from torch.utils.data import DataLoader
 from imageio import imread
 from random import randint
+import cv2  # OpenCV kütüphanesi eklendi (Resize için)
 
 class SECONDCCDataset(Dataset):
     """
     SECOND Dataset (SECOND-CC-AUG) için PyTorch Dataset sınıfı.
-    ClipEncoder ile uyumlu olması için ImageNet normalizasyonunu ve 
-    ekran görüntüsündeki 'rgb' klasör yapısını kullanır.
+    ClipEncoder ile uyumlu olması için ImageNet normalizasyonunu kullanır.
+    Hata düzeltmeleri:
+    1. Tüm resimleri zorla 256x256 boyutuna getirir.
+    2. token_all çıktısını sabit boyutta (5 caption) tutar.
     """
 
     def __init__(self, data_folder, list_path, split, token_folder=None, vocab_file=None, max_length=40, allow_unk=0, max_iters=None):
@@ -20,17 +23,15 @@ class SECONDCCDataset(Dataset):
         self.split = split
         self.max_length = max_length
         
-        # --- 1. Normalizasyon (ImageNet Standartları) ---
-        # ClipEncoder bu istatistikleri bekliyor.
+        # ClipEncoder için ImageNet İstatistikleri
         self.mean = [0.485, 0.456, 0.406]
         self.std = [0.229, 0.224, 0.225]
 
         assert self.split in {'train', 'val', 'test'}
         
-        # Text dosyasını oku (preprocess tarafından oluşturulan train.txt vb.)
         txt_file_path = os.path.join(list_path, split + '.txt')
         if not os.path.exists(txt_file_path):
-             raise FileNotFoundError(f"Liste dosyası bulunamadı: {txt_file_path}. Lütfen önce preprocess_data.py çalıştırın.")
+             raise FileNotFoundError(f"Liste dosyası bulunamadı: {txt_file_path}")
 
         self.img_ids = [i_id.strip() for i_id in open(txt_file_path)]
         
@@ -40,7 +41,6 @@ class SECONDCCDataset(Dataset):
                 with open(vocab_path, 'r') as f:
                     self.word_vocab = json.load(f)
             else:
-                print(f"UYARI: Vocab dosyası bulunamadı ({vocab_path}).")
                 self.word_vocab = {}
             self.allow_unk = allow_unk
             
@@ -50,12 +50,8 @@ class SECONDCCDataset(Dataset):
             
         self.files = []
         
-        # --- 2. Dosya Yollarını Oluşturma ---
         for item in self.img_ids:
-            # item formatı genelde: "00003_0_0.png-0" (DosyaAdı - TokenID)
-            
             if '-' in item:
-                # Sondaki tireye göre ayır (Token ID'yi al)
                 parts = item.rsplit('-', 1) 
                 img_name = parts[0]
                 token_id_str = parts[1]
@@ -63,24 +59,13 @@ class SECONDCCDataset(Dataset):
                 img_name = item
                 token_id_str = None
 
-            # SECOND-CC klasör yapısı ekran görüntüsüne göre:
-            # data_folder / train / rgb / A / dosya_adı
-            
-            # 1. Ana split klasörü (train/test)
             split_dir = os.path.join(data_folder, split)
-            
-            # 2. 'rgb' klasörü kontrolü
-            # Ekran görüntüsünde 'rgb' klasörü var, onu ekliyoruz.
+            # Klasör yapısı: .../train/rgb/A/00042.png
             base_path = os.path.join(split_dir, 'rgb') 
 
-            # 3. A ve B klasörleri (A: Before, B: After varsayımı)
             img_fileA = os.path.join(base_path, 'A', img_name)
-            img_fileB = os.path.join(base_path, 'B', img_name) # Ekran görüntüsünde B yok ama çift olması gerekir.
+            img_fileB = os.path.join(base_path, 'B', img_name)
             
-            # Eğer B klasörü yoksa (belki isim farklıdır), kodu uyaralım veya 'A'yı kopyalayalım (Debug için)
-            # Normalde Change Detection'da mutlaka A/B veya im1/im2 çifti olur.
-            
-            # Token file yolu
             if token_folder is not None:
                 token_file = os.path.join(token_folder, img_name.split('.')[0] + '.txt')
             else:
@@ -101,25 +86,26 @@ class SECONDCCDataset(Dataset):
         datafiles = self.files[index]
         name = datafiles["name"]
         
-        # --- Resim Okuma ---
+        # --- 1. Resim Okuma ve Resize ---
         try:
             imgA = imread(datafiles["imgA"])
-            # Eğer B resmi bulunamazsa hata vermemesi için kontrol (Dataset bütünlüğü için önemlidir)
             if not os.path.exists(datafiles["imgB"]):
-                # Fallback: Eğer B klasörü yoksa, kodun patlamaması için A'yı kopyala (Sadece test için!)
-                # Gerçek eğitimde burası hata vermeli.
-                # print(f"UYARI: B Resmi bulunamadı: {datafiles['imgB']}")
                 imgB = imgA.copy() 
             else:
                 imgB = imread(datafiles["imgB"])
-                
         except Exception as e:
-            print(f"Hata: Resim okunamadı -> {datafiles['imgA']}")
-            # Bozuk resim gelirse dummy data döndür (Eğitimi durdurmamak için)
+            # Hata durumunda siyah resim döndür
             imgA = np.zeros((256, 256, 3), dtype=np.uint8)
             imgB = np.zeros((256, 256, 3), dtype=np.uint8)
 
-        # Float dönüşümü ve 0-1 Aralığına Çekme (ImageNet için Kritik)
+        # [ÇÖZÜM 1] Zorunlu Resize (Tüm resimler 256x256 olmalı)
+        # Eğer resim zaten 256x256 ise cv2 çok hızlı geçer, değilse düzeltir.
+        if imgA.shape[0] != 256 or imgA.shape[1] != 256:
+            imgA = cv2.resize(imgA, (256, 256), interpolation=cv2.INTER_CUBIC)
+        if imgB.shape[0] != 256 or imgB.shape[1] != 256:
+            imgB = cv2.resize(imgB, (256, 256), interpolation=cv2.INTER_CUBIC)
+
+        # Float Dönüşümü ve Ölçekleme
         imgA = np.asarray(imgA, np.float32) / 255.0
         imgB = np.asarray(imgB, np.float32) / 255.0
         
@@ -128,45 +114,60 @@ class SECONDCCDataset(Dataset):
         imgB = np.moveaxis(imgB, -1, 0)
 
         # ImageNet Normalizasyonu
-        # (img - mean) / std
         for i in range(len(self.mean)):
             imgA[i,:,:] -= self.mean[i]
             imgA[i,:,:] /= self.std[i]
             imgB[i,:,:] -= self.mean[i]
             imgB[i,:,:] /= self.std[i]      
 
-        # --- Token İşlemleri ---
+        # --- 2. Token İşlemleri ve Sabitleme ---
+        # [ÇÖZÜM 2] Caption sayısını sabitleme (Batch yapabilmek için)
+        MAX_CAPTION_COUNT = 5  # Her resim için maksimum 5 cümle varsayıyoruz
+        
+        # Boş şablonları oluştur (Hepsi 0)
+        token_all = np.zeros((MAX_CAPTION_COUNT, self.max_length), dtype=int)
+        token_all_len = np.zeros((MAX_CAPTION_COUNT, 1), dtype=int)
+        
         if datafiles["token"] is not None and os.path.exists(datafiles["token"]):
             with open(datafiles["token"], 'r') as f:
                 caption = f.read()
-            
             try:
                 caption_list = json.loads(caption)
             except:
                 caption_list = [caption.strip()]
 
-            token_all = np.zeros((len(caption_list), self.max_length), dtype=int)
-            token_all_len = np.zeros((len(caption_list), 1), dtype=int)
+            # Var olan captionları şablona doldur
+            # Eğer 5'ten az ise kalanlar 0 (NULL) kalır, sorun olmaz.
+            # Eğer 5'ten çok ise ilk 5'i alınır.
+            limit = min(len(caption_list), MAX_CAPTION_COUNT)
             
-            for j, tokens in enumerate(caption_list):
-                tokens_encode = encode(tokens, self.word_vocab, allow_unk=self.allow_unk == 1)
+            for j in range(limit):
+                tokens_encode = encode(caption_list[j], self.word_vocab, allow_unk=self.allow_unk == 1)
+                # Max length kontrolü (Eğer kelime sayısı 40'ı geçerse kırp)
+                if len(tokens_encode) > self.max_length:
+                     tokens_encode = tokens_encode[:self.max_length]
+                     
                 token_all[j, :len(tokens_encode)] = tokens_encode
                 token_all_len[j] = len(tokens_encode)
                 
             if datafiles["token_id"] is not None:
                 id = int(datafiles["token_id"])
-                # id index sınırlarını aşarsa diye güvenlik
-                if id >= len(caption_list): id = 0 
+                if id >= limit: id = 0 
                 token = token_all[id]
                 token_len = token_all_len[id].item()
             else:
-                j = randint(0, len(caption_list) - 1)
-                token = token_all[j]
-                token_len = token_all_len[j].item()
+                # Rastgele bir caption seç (Eğitim sırasında token_all yerine token kullanılır)
+                # Sadece dolu olanlardan seç (limit'e kadar)
+                if limit > 0:
+                    j = randint(0, limit - 1)
+                    token = token_all[j]
+                    token_len = token_all_len[j].item()
+                else:
+                    token = np.zeros(self.max_length, dtype=int)
+                    token_len = 0
         else:
-            token_all = np.zeros((1, self.max_length), dtype=int)
+            # Token dosyası yoksa hepsi sıfır kalır
             token = np.zeros(self.max_length, dtype=int)
             token_len = 0
-            token_all_len = np.zeros(1, dtype=int)
 
         return imgA.copy(), imgB.copy(), token_all.copy(), token_all_len.copy(), token.copy(), np.array(token_len), name
