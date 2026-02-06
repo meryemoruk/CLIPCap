@@ -276,8 +276,8 @@ class AttentiveEncoder(nn.Module):
                 Transformer(channels*2, channels*2, heads, attention_dim, hidden_dim, dropout, norm_first=False),
             ]))
 
-        self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
-        self.cross_attr2 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
+        self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
+        self.cross_attr2 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
         self.last_norm1 = nn.LayerNorm(channels)
         self.last_norm2 = nn.LayerNorm(channels)
 
