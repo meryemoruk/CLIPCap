@@ -11,16 +11,17 @@ from torchvision import transforms
 
 class DinoMaskGenerator(nn.Module):
     def __init__(self, model_type='dinov2_vits14'):
-        device = "cuda" if torch.cuda.is_available() else "cpu"
         super().__init__()
         print(f"Loading {model_type}...")
         self.backbone = torch.hub.load('facebookresearch/dinov2', model_type)
         self.backbone.eval()
-        self.backbone.to(device)
+
+        for param in self.backbone.parameters():
+            param.requires_grad = False
         
         # DINOv2 için gerekli normalizasyon değerleri
-        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(device))
-        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(device))
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
     def preprocess(self, img):
         # 1. Resize (224'ün katları)
@@ -350,10 +351,25 @@ class AttentiveEncoder(nn.Module):
 
     def forward(self, img1, img2, mask=None):
         batch, c, h, w = img1.shape
-        pos_h = torch.arange(h).cuda()
-        pos_w = torch.arange(w).cuda()
+
+        # --- KRİTİK DÜZELTME: Maske Boyutlandırma ---
+        if mask is not None:
+            # 1. Maskeyi, mevcut özellik haritası boyutuna (h, w) getir (Örn: 7x7)
+            # DINO (16x16) -> CLIP (7x7)
+            if mask.shape[-2:] != (h, w):
+                mask = F.interpolate(mask, size=(h, w), mode='nearest')
+            
+            # 2. Transformer'ın anlayacağı formata (Flatten) çevir
+            # (Batch, 1, h, w) -> (Batch, 1, 1, h*w) -> (Batch, 1, 1, 49)
+            # Bu format, (Batch, Heads, 49, 49) matrisiyle işlem yapmaya uygundur.
+            mask = mask.view(batch, 1, 1, h * w)
+        # --------------------------------------------
+
+        pos_h = torch.arange(h).to(img1.device)
+        pos_w = torch.arange(w).to(img1.device)
         embed_h = self.w_embedding(pos_h)
         embed_w = self.h_embedding(pos_w)
+
         pos_embedding = torch.cat([embed_w.unsqueeze(0).repeat(h, 1, 1),
                                        embed_h.unsqueeze(1).repeat(1, w, 1)], 
                                        dim = -1)                            
