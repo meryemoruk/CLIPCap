@@ -107,8 +107,8 @@ def main(args):
             #decode_lengths = max(token_all_len.squeeze(0)).item()
             # Forward prop.
             if encoder is not None:
-                feat1, feat2 = encoder(imgA, imgB)
-            feat1, feat2 = encoder_trans(feat1, feat2)
+                feat1, feat2, mask = encoder(imgA, imgB)
+            feat1, feat2 = encoder_trans(feat1, feat2, mask)
             seq = decoder.sample(feat1, feat2, args.beam_size)
 
             img_token = token_all.tolist()
