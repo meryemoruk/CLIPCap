@@ -228,7 +228,7 @@ class MultiHeadAtt(nn.Module):
     def forward(self, x1, x2, x3):
         q = self.to_q(x1)
         k = self.to_k(x2)
-        v = self.to_v(x3)
+        v = self.to_k(x3)
         q = rearrange(q, 'b n (h d) -> b h n d', h = self.heads)
         k = rearrange(k, 'b n (h d) -> b h n d', h = self.heads)
         v = rearrange(v, 'b n (h d) -> b h n d', h = self.heads)
