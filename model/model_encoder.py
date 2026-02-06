@@ -386,8 +386,8 @@ class AttentiveEncoder(nn.Module):
             # img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
             # img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
             img = torch.cat([img_sa1, img_sa2], dim = -1)
-            mask_double = torch.cat([mask, mask], dim = -1)
-            img = m(img, img, img, mask_double)
+            # mask_double = torch.cat([mask, mask], dim = -1)
+            img = m(img, img, img, mask)
             img_sa1 = img[:,:,:c] + img1 #+ img_ca1
             img_sa2 = img[:,:,c:] + img2 #+ img_ca2
             # img_sa1 = self.last_norm1(img_sa1)
