@@ -20,6 +20,81 @@ def count_parameters(model, model_name):
     print(f"{model_name}: {total_params:,} toplam parametre | {trainable_params:,} eğitilebilir parametre")
     return trainable_params
 
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
+
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
+import numpy as np
+
+def visualize_results(img1_tensor, img2_tensor, mask_tensor, output_path="result.png"):
+    """
+    Görüntüleri görselleştirir ve kaydeder.
+    Otomatik 'Denormalization' yapar (ImageNet standartlarına göre).
+    """
+    
+    # --- 1. Batch Boyutunu Yönetme ---
+    if img1_tensor.dim() == 4: img1_use = img1_tensor[0]
+    else: img1_use = img1_tensor
+
+    if img2_tensor.dim() == 4: img2_use = img2_tensor[0]
+    else: img2_use = img2_tensor
+
+    if mask_tensor.dim() == 4: mask_use = mask_tensor[0]
+    else: mask_use = mask_tensor
+
+    # --- 2. Maskeyi Büyütme (Upsample) ---
+    target_h, target_w = img1_use.shape[1], img1_use.shape[2]
+    mask_resized = F.interpolate(mask_use.unsqueeze(0), size=(target_h, target_w), mode='bilinear', align_corners=False)
+    
+    # --- 3. Tensor -> Numpy ve Renk Kanalı Düzenleme (H, W, C) ---
+    img1_np = img1_use.detach().permute(1, 2, 0).cpu().numpy()
+    img2_np = img2_use.detach().permute(1, 2, 0).cpu().numpy()
+    mask_np = mask_resized.squeeze().detach().cpu().numpy()
+
+    # --- 4. DENORMALIZATION (ÖNEMLİ ADIM) ---
+    # ImageNet Mean ve Std değerleri (CLIP ve DINO bunları kullanır)
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+
+    # Formül: original = (normalized * std) + mean
+    img1_np = (img1_np * std) + mean
+    img2_np = (img2_np * std) + mean
+
+    # Değerleri [0, 1] aralığına sıkıştır (Clip)
+    # Bu işlem float hatalarını temizler ve 'Clipping' uyarısını kesin çözer.
+    img1_np = np.clip(img1_np, 0, 1)
+    img2_np = np.clip(img2_np, 0, 1)
+
+    # --- 5. Çizim ---
+    plt.figure(figsize=(15, 5))
+
+    # Before Image
+    plt.subplot(1, 3, 1)
+    plt.imshow(img1_np)
+    plt.title("Önce (Before)")
+    plt.axis('off')
+
+    # After Image
+    plt.subplot(1, 3, 2)
+    plt.imshow(img2_np)
+    plt.title("Sonra (After)")
+    plt.axis('off')
+
+    # Difference Mask (Heatmap)
+    plt.subplot(1, 3, 3)
+    plt.imshow(mask_np, cmap='jet', vmin=0, vmax=1) 
+    plt.colorbar(fraction=0.046, pad=0.04)
+    plt.title("Değişim Maskesi")
+    plt.axis('off')
+
+    plt.tight_layout()
+    
+    # Kaydetme
+    plt.savefig(output_path, bbox_inches='tight')
+    plt.close()
+    print(f"Görsel kaydedildi (Düzeltilmiş): {output_path}")
+
 def main(args):
     """
     Training and validation.
@@ -127,7 +202,7 @@ def main(args):
     index_i = 0
     hist = np.zeros((args.num_epochs * len(train_loader), 3))
     # Epochs
-
+    mask_example_count = 9
     for epoch in range(start_epoch, args.num_epochs):        
         # Batches
         for id, (imgA, imgB, _, _, token, token_len, _) in enumerate(train_loader):
@@ -151,7 +226,14 @@ def main(args):
             token = token.squeeze(1).cuda()
             token_len = token_len.cuda()
             # Forward prop.
-            feat1, feat2, mask = encoder(imgA, imgB)         
+            feat1, feat2, mask = encoder(imgA, imgB)
+
+            # --- MASK SAVING ---
+            if(mask_example_count != 0):
+                visualize_results(imgA, imgB, mask, "./"+str(mask_example_count)+".png")
+                mask_example_count -= 1
+            # --- MASK SAVING ---
+
             feat1, feat2 = encoder_trans(feat1, feat2, mask)
             scores, caps_sorted, decode_lengths, sort_ind = decoder(feat1, feat2, token, token_len)
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
