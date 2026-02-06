@@ -29,6 +29,8 @@ def main(args):
     args.token_folder = './data/' + args.data_name + '/tokens/'
     args.list_path = './data/' + args.data_name + '/'
 
+    earlyStop = 0
+
     os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)  
     if os.path.exists(args.savepath)==False:
@@ -250,6 +252,7 @@ def main(args):
         # Check if there was an improvement        
         if  Bleu_4 > best_bleu4:
             best_bleu4 = max(Bleu_4, best_bleu4)
+            earlyStop = 0
             #save_checkpoint                
             print('Save Model')  
             state = {'encoder_dict': encoder.state_dict(), 
@@ -258,7 +261,11 @@ def main(args):
                     }                     
             model_name = str(args.data_name)+'_batchsize_'+str(args.train_batchsize)+'_'+str(args.network)+'Bleu_4_'+str(round(10000*best_bleu4))+'.pth'
             torch.save(state, os.path.join(args.savepath, model_name))
+        else:
+            earlyStop += 1
 
+        if(earlyStop == args.early_stop):
+            break
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Remote_Sensing_Image_Changes_to_Captions')
@@ -295,6 +302,7 @@ if __name__ == '__main__':
     parser.add_argument('--decoder_lr', type=float, default=1e-4, help='learning rate for decoder.')
     parser.add_argument('--grad_clip', type=float, default=None, help='clip gradients at an absolute value of.')
     parser.add_argument('--dropout', type=float, default=0.1, help='dropout')
+    parser.add_argument('--early_stop', type=int, default=10, help='early stop')
     # Validation
     parser.add_argument('--val_batchsize', type=int, default=1, help='batch_size for validation')
     parser.add_argument('--savepath', default="./models_checkpoint/")
