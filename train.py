@@ -35,7 +35,13 @@ def main(args):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)  
     if os.path.exists(args.savepath)==False:
         os.makedirs(args.savepath)
-    best_bleu4 = 0  # BLEU-4 score right now
+    best_epoch  = 0
+    best_bleu4  = 0  # BLEU-4 score right now
+    best_rouge  = 0
+    best_cider  = 0
+    best_meteor = 0
+    best_avg    = 0
+
     start_epoch = 0
     with open(os.path.join(args.list_path + args.vocab_file + '.json'), 'r') as f:
         word_vocab = json.load(f)
@@ -238,9 +244,10 @@ def main(args):
             Meteor = score_dict['METEOR']
             Rouge = score_dict['ROUGE_L']
             Cider = score_dict['CIDEr']
-            print('Validation:\n' 'Time: {0:.3f}\t' 'BLEU-1: {1:.4f}\t' 'BLEU-2: {2:.4f}\t' 'BLEU-3: {3:.4f}\t' 
-                'BLEU-4: {4:.4f}\t' 'Meteor: {5:.4f}\t' 'Rouge: {6:.4f}\t' 'Cider: {7:.4f}\t'
-                .format(val_time, Bleu_1, Bleu_2, Bleu_3, Bleu_4, Meteor, Rouge, Cider))
+            Avg = (Bleu_4 + Meteor + Rouge + Cider) / 4
+            print('Validation:\n' 'Time: {0:.3f}\t' 'AVG: {1:.4f}\t' 'BLEU-4: {2:.4f}\t' 'Cider: {3:.4f}\t' 'BLEU-1: {4:.4f}\t' 
+                'BLEU-2: {5:.4f}\t' 'BLEU-3: {6:.4f}\t' 'Meteor: {7:.4f}\t' 'Rouge: {8:.4f}\t'
+                .format(val_time, Avg, Bleu_4, Cider, Bleu_1, Bleu_2, Bleu_3, Meteor, Rouge))
         
         #Adjust learning rate
         decoder_lr_scheduler.step()
@@ -250,9 +257,17 @@ def main(args):
             encoder_lr_scheduler.step()
             #print(encoder_optimizer.param_groups[0]['lr'])
         # Check if there was an improvement        
-        if  Bleu_4 > best_bleu4:
-            best_bleu4 = max(Bleu_4, best_bleu4)
+        if  Avg > best_avg:
+            best_avg = Avg
+            best_bleu4 = Bleu_4
+            best_cider = Cider
+            best_rouge = Rouge
+            best_meteor = Meteor
+            best_epoch = epoch
+            print('New Best:\n' 'AVG: {0:.4f}\t' 'BLEU-4: {1:.4f}\t' 'Cider: {2:.4f}\t' 'Meteor: {3:.4f}\t' 'Rouge: {4:.4f}\t'
+                .format(best_avg, best_bleu4, best_cider, best_meteor, best_rouge))
             earlyStop = 0
+
             #save_checkpoint                
             print('Save Model')  
             state = {'encoder_dict': encoder.state_dict(), 
@@ -263,7 +278,11 @@ def main(args):
             torch.save(state, os.path.join(args.savepath, model_name))
         else:
             earlyStop += 1
+            print(f"No improvement since {earlyStop} epochs.\n")
 
+            print('Old Best:\n' 'Epoch: {0:d}\t' 'AVG: {1:.4f}\t' 'BLEU-4: {2:.4f}\t' 'Cider: {3:.4f}\t' 'Meteor: {4:.4f}\t' 'Rouge: {5:.4f}\t'
+                .format(best_epoch, best_avg, best_bleu4, best_cider, best_meteor, best_rouge))
+    
         if(earlyStop == args.early_stop):
             break
 
