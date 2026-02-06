@@ -228,7 +228,7 @@ class MultiHeadAtt(nn.Module):
     def forward(self, x1, x2, x3):
         q = self.to_q(x1)
         k = self.to_k(x2)
-        v = self.to_k(x3)
+        v = self.to_v(x3)
         q = rearrange(q, 'b n (h d) -> b h n d', h = self.heads)
         k = rearrange(k, 'b n (h d) -> b h n d', h = self.heads)
         v = rearrange(v, 'b n (h d) -> b h n d', h = self.heads)
@@ -276,10 +276,10 @@ class AttentiveEncoder(nn.Module):
                 Transformer(channels*2, channels*2, heads, attention_dim, hidden_dim, dropout, norm_first=False),
             ]))
 
-        self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
-        self.cross_attr2 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
-        self.last_norm1 = nn.LayerNorm(channels)
-        self.last_norm2 = nn.LayerNorm(channels)
+        # self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
+        # self.cross_attr2 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
+        # self.last_norm1 = nn.LayerNorm(channels)
+        # self.last_norm2 = nn.LayerNorm(channels)
 
         self._reset_parameters()
 
@@ -308,12 +308,12 @@ class AttentiveEncoder(nn.Module):
         for (l, m) in self.selftrans:           
             img_sa1 = l(img_sa1, img_sa1, img_sa1) + img_sa1
             img_sa2 = l(img_sa2, img_sa2, img_sa2) + img_sa2
-            img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
-            img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
+            # img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
+            # img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
             img = torch.cat([img_sa1, img_sa2], dim = -1)
             img = m(img, img, img)
-            img_sa1 = img[:,:,:c] + img1 + img_ca1
-            img_sa2 = img[:,:,c:] + img2 + img_ca2
+            img_sa1 = img[:,:,:c] + img1 #+ img_ca1
+            img_sa2 = img[:,:,c:] + img2 #+ img_ca2
             # img_sa1 = self.last_norm1(img_sa1)
             # img_sa2 = self.last_norm2(img_sa2)
 
