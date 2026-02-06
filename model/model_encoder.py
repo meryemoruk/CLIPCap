@@ -6,6 +6,51 @@ import clip
 import os
 import torch.nn.functional as F
 
+# --- maske ---
+from torchvision import transforms
+
+class DinoMaskGenerator(nn.Module):
+    def __init__(self, model_type='dinov2_vits14'):
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        super().__init__()
+        print(f"Loading {model_type}...")
+        self.backbone = torch.hub.load('facebookresearch/dinov2', model_type)
+        self.backbone.eval()
+        self.backbone.to(device)
+        
+        # DINOv2 için gerekli normalizasyon değerleri
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(device))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(device))
+
+    def preprocess(self, img):
+        # 1. Resize (224'ün katları)
+        img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
+        # 2. Normalize
+        img = (img - self.mean) / self.std
+        return img
+
+    def forward(self, img1, img2):
+        with torch.no_grad():
+            # (Batch, 3, H, W)
+            p_img1 = self.preprocess(img1)
+            p_img2 = self.preprocess(img2)
+            
+            # Özellik Çıkarımı
+            feat1 = self.backbone.forward_features(p_img1)["x_norm_patchtokens"]
+            feat2 = self.backbone.forward_features(p_img2)["x_norm_patchtokens"]
+            
+            # Benzerlik ve Maske Hesabı (Cosine Similarity)
+            similarity = F.cosine_similarity(feat1, feat2, dim=-1)
+            mask = 1.0 - similarity # Fark ne kadar büyükse değer 1'e o kadar yakın olur
+            
+            # Kare forma dönüştürme (Grid)
+            B, N = mask.shape
+            H_grid = int(N**0.5) # Örn: 256 -> 16
+            mask = mask.view(B, 1, H_grid, H_grid)
+            
+            return mask
+
+
 class ClipEncoder(nn.Module):
     def __init__(self, path = "/content/CLIPCap/RemoteCLIP-ViT-B-32.pt"):
         super().__init__()
@@ -170,6 +215,13 @@ class Encoder(nn.Module):
             # self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
             self.fine_tune()
 
+        # --- MASKE ---
+        self.dino = DinoMaskGenerator()
+        self.dino_transform = transforms.Compose([
+            transforms.Resize((224, 224)), # Görselleştirme kolaylığı için baştan boyutlandırdık
+            transforms.ToTensor()          # [0, 255] -> [0.0, 1.0]
+            ])
+
     def forward(self, imageA, imageB):
         """
         Forward propagation.
@@ -177,10 +229,13 @@ class Encoder(nn.Module):
         :param images: images, a tensor of dimensions (batch_size, 3, image_size, image_size)
         :return: encoded images
         """
+        mask =  None
+        mask = self.dino(self.dino_transform(imageA), self.dino_transform(imageB))
+
         feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
         feat2 = self.model(imageB)
 
-        return feat1, feat2
+        return feat1, feat2, mask
 
     def fine_tune(self, fine_tune=True):
         """
@@ -225,7 +280,7 @@ class MultiHeadAtt(nn.Module):
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
 
-    def forward(self, x1, x2, x3):
+    def forward(self, x1, x2, x3, mask=None):
         q = self.to_q(x1)
         k = self.to_k(x2)
         v = self.to_v(x3)
@@ -233,6 +288,11 @@ class MultiHeadAtt(nn.Module):
         k = rearrange(k, 'b n (h d) -> b h n d', h = self.heads)
         v = rearrange(v, 'b n (h d) -> b h n d', h = self.heads)
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+
+        # --- MASKE ---
+        if mask is not None:
+            # Maske şekli (Batch, 1, 1, Seq_Len) veya (Batch, 1, Seq_Len, Seq_Len) olmalı.
+            dots = dots.masked_fill(mask == 0, float('-inf'))
 
         attn = self.dropout(self.attend(dots))
         out = torch.matmul(attn, v)
@@ -248,12 +308,14 @@ class Transformer(nn.Module):
         self.norm1 = nn.LayerNorm(dim_q)
         self.norm2 = nn.LayerNorm(dim_q)
 
-    def forward(self, x1, x2, x3):
+       
+
+    def forward(self, x1, x2, x3, mask=None):
         if self.norm_first:
-            x = self.att(self.norm1(x1), self.norm1(x2), self.norm1(x3)) + x1
+            x = self.att(self.norm1(x1), self.norm1(x2), self.norm1(x3), mask) + x1
             x = self.feedforward(self.norm2(x)) + x
         else:
-            x = self.norm1(self.att(x1, x2, x3) + x1)
+            x = self.norm1(self.att(x1, x2, x3, mask) + x1)
             x = self.norm2(self.feedforward(x) + x)
 
         return x
@@ -281,6 +343,8 @@ class AttentiveEncoder(nn.Module):
         # self.last_norm1 = nn.LayerNorm(channels)
         # self.last_norm2 = nn.LayerNorm(channels)
 
+         
+        
         self._reset_parameters()
 
     def _reset_parameters(self):
@@ -289,7 +353,7 @@ class AttentiveEncoder(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, img1, img2):
+    def forward(self, img1, img2, mask=None):
         batch, c, h, w = img1.shape
         pos_h = torch.arange(h).cuda()
         pos_w = torch.arange(w).cuda()
@@ -306,12 +370,13 @@ class AttentiveEncoder(nn.Module):
         img_sa1, img_sa2 = img1, img2
 
         for (l, m) in self.selftrans:           
-            img_sa1 = l(img_sa1, img_sa1, img_sa1) + img_sa1
-            img_sa2 = l(img_sa2, img_sa2, img_sa2) + img_sa2
+            img_sa1 = l(img_sa1, img_sa1, img_sa1, mask) + img_sa1
+            img_sa2 = l(img_sa2, img_sa2, img_sa2, mask) + img_sa2
             # img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
             # img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
             img = torch.cat([img_sa1, img_sa2], dim = -1)
-            img = m(img, img, img)
+            mask_double = torch.cat([mask, mask], dim = -1)
+            img = m(img, img, img, mask_double)
             img_sa1 = img[:,:,:c] + img1 #+ img_ca1
             img_sa2 = img[:,:,c:] + img2 #+ img_ca2
             # img_sa1 = self.last_norm1(img_sa1)

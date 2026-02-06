@@ -122,8 +122,8 @@ def main(args):
             token = token.squeeze(1).cuda()
             token_len = token_len.cuda()
             # Forward prop.
-            feat1, feat2 = encoder(imgA, imgB)         
-            feat1, feat2 = encoder_trans(feat1, feat2)
+            feat1, feat2, mask = encoder(imgA, imgB)         
+            feat1, feat2 = encoder_trans(feat1, feat2, mask)
             scores, caps_sorted, decode_lengths, sort_ind = decoder(feat1, feat2, token, token_len)
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
             targets = caps_sorted[:, 1:]
@@ -182,8 +182,8 @@ def main(args):
                 token_all = token_all.squeeze(0).cuda()
                 # Forward prop.
                 if encoder is not None:
-                    feat1, feat2 = encoder(imgA, imgB)
-                feat1, feat2 = encoder_trans(feat1, feat2)
+                    feat1, feat2, mask = encoder(imgA, imgB)
+                feat1, feat2 = encoder_trans(feat1, feat2, mask)
                 seq = decoder.sample(feat1, feat2, k=1)
 
                 img_token = token_all.tolist()
