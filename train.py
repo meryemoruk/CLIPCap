@@ -14,6 +14,12 @@ from model.model_encoder import Encoder, AttentiveEncoder
 from model.model_decoder import DecoderTransformer
 from utils import *
 
+def count_parameters(model, model_name):
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"{model_name}: {total_params:,} toplam parametre | {trainable_params:,} eğitilebilir parametre")
+    return trainable_params
+
 def main(args):
     """
     Training and validation.
@@ -65,6 +71,21 @@ def main(args):
     decoder = decoder.cuda()
     # Loss function
     criterion = torch.nn.CrossEntropyLoss().cuda()
+
+    # ------- PARAMETRE -------
+    print("-" * 50)
+    print("MODEL PARAMETRE İSTATİSTİKLERİ")
+    print("-" * 50)
+    
+    p_encoder = count_parameters(encoder, "Encoder (Backbone)")
+    p_trans = count_parameters(encoder_trans, "Attentive Encoder")
+    p_decoder = count_parameters(decoder, "Decoder Transformer")
+    
+    total_trainable = p_encoder + p_trans + p_decoder
+    print("-" * 50)
+    print(f"TOPLAM EĞİTİLEBİLİR PARAMETRE: {total_trainable:,}")
+    print("-" * 50)
+    # ------- PARAMETRE -------
 
     # Custom dataloaders
     if args.data_name == 'LEVIR_CC':
@@ -156,7 +177,7 @@ def main(args):
                 print('Epoch: [{0}][{1}/{2}]\t'
                     'Batch Time: {3:.3f}\t'
                     'Loss: {4:.4f}\t'
-                    'Top-5 Accuracy: {5:.3f}'.format(epoch, index_i, args.num_epochs*len(train_loader),
+                    'Top-5 Accuracy: {5:.3f}'.format(epoch, index_i %len(train_loader), len(train_loader),
                                             np.mean(hist[index_i-args.print_freq:index_i-1,0])*args.print_freq,
                                             np.mean(hist[index_i-args.print_freq:index_i-1,1]),
                                             np.mean(hist[index_i-args.print_freq:index_i-1,2])))
