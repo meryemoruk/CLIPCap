@@ -50,7 +50,6 @@ class DinoMaskGenerator(nn.Module):
             
             return mask
 
-
 class ClipEncoder(nn.Module):
     def __init__(self, path = "/content/CLIPCap/RemoteCLIP-ViT-B-32.pt"):
         super().__init__()
@@ -217,10 +216,6 @@ class Encoder(nn.Module):
 
         # --- MASKE ---
         self.dino = DinoMaskGenerator()
-        self.dino_transform = transforms.Compose([
-            transforms.Resize((224, 224)), # Görselleştirme kolaylığı için baştan boyutlandırdık
-            transforms.ToTensor()          # [0, 255] -> [0.0, 1.0]
-            ])
 
     def forward(self, imageA, imageB):
         """
@@ -230,7 +225,7 @@ class Encoder(nn.Module):
         :return: encoded images
         """
         mask =  None
-        mask = self.dino(self.dino_transform(imageA), self.dino_transform(imageB))
+        mask = self.dino((imageA), (imageB))
 
         feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
         feat2 = self.model(imageB)
