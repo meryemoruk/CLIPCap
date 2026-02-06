@@ -314,8 +314,8 @@ class AttentiveEncoder(nn.Module):
             img = m(img, img, img)
             img_sa1 = img[:,:,:c] + img1 + img_ca1
             img_sa2 = img[:,:,c:] + img2 + img_ca2
-            img_sa1 = self.last_norm1(img_sa1)
-            img_sa2 = self.last_norm2(img_sa2)
+            # img_sa1 = self.last_norm1(img_sa1)
+            # img_sa2 = self.last_norm2(img_sa2)
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
         img2 = img_sa2.reshape(batch, h, w, c).transpose(-1, 1)
