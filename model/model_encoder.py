@@ -385,9 +385,9 @@ class AttentiveEncoder(nn.Module):
             img_sa2 = l(img_sa2, img_sa2, img_sa2, mask) + img_sa2
             # img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
             # img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
-
-            img_sa1 = img_sa1 * mask
-            img_sa2 = img_sa2 * mask
+            mask_product = mask.view(batch, 49, 1)
+            img_sa1 = img_sa1 * mask_product
+            img_sa2 = img_sa2 * mask_product
 
             img = torch.cat([img_sa1, img_sa2], dim = -1)
             # mask_double = torch.cat([mask, mask], dim = -1)
