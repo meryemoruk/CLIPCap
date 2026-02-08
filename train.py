@@ -188,8 +188,8 @@ def main(args):
                 feat1 = feat1.to(device) # [Batch, 1280, 16, 16]
                 feat2 = feat2.to(device)
                 token = token.to(device) # [Batch, 40]
-                token_len = token_len.to(device)
-
+                
+                token_all = token_all.squeeze(0).cuda()
                 # Forward prop.
                 feat1, feat2 = encoder_trans(feat1, feat2, None)
                 seq = decoder.sample(feat1, feat2, k=1)
