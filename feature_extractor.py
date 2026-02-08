@@ -11,9 +11,9 @@ from model.model_encoder import Encoder
 from data.SECOND_CC.SECONDCC import SECONDCCDataset
 
 # --- AYARLAR ---
-DATA_FOLDER = "/content/SECOND_dataset"  # SECOND veri setinin olduğu klasör
-LIST_PATH = "/content/SECOND_dataset/lists" # Train/Val listelerinin olduğu yer
-SAVE_DIR = "/content/drive/MyDrive/SECOND_CRADIO_Features" # Özelliklerin kaydedileceği yer (Drive önerilir)
+DATA_FOLDER = "/content/CLIPCap/data/SECOND_CC"  # SECOND veri setinin olduğu klasör
+LIST_PATH = "/content/CLIPCap/data/SECOND_CC" # Train/Val listelerinin olduğu yer
+SAVE_DIR = "/content/SECOND_CRADIO_Features" # Özelliklerin kaydedileceği yer (Drive önerilir)
 SPLIT = "train" # 'train' veya 'val' veya 'test'
 BATCH_SIZE = 32 # L4 GPU için 32 veya 64 uygundur
 
