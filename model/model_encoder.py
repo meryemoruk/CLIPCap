@@ -87,42 +87,44 @@ class Encoder(nn.Module):
 
     def forward(self, imageA, imageB):
         """
-        Forward propagation.
-        Inputs (imageA, imageB) should be PIL Images or list of PIL images.
-        If they are already Tensors, you should bypass self.processor!
+        Forward propagation with Forced Interpolation.
         """
         
-        # 1. İşlemci (Processor) ile veriyi hazırla ve GPU'ya taşı
-        # Not: imageA ve imageB burada PIL Image listesi olmalıdır. 
-        # Eğer DataLoader'dan Tensor geliyorsa processor kullanılmamalı, direkt resize/normalize yapılmalı.
-        inputs_a = self.processor(
-            images=imageA, 
-            return_tensors="pt", 
-            do_resize=True, 
-            size={"height": 224, "width": 224}, # Kesin boyut
-            do_center_crop=True # Gerekirse kırp
-        )
-        inputs_b = self.processor(
-            images=imageB, 
-            return_tensors="pt", 
-            do_resize=True, 
-            size={"height": 224, "width": 224}, 
-            do_center_crop=True
-        )        
+        # 1. İşlemci ile veriyi hazırla
+        # Not: size={"height": 224, "width": 224} versek bile model bazen farklı çıkabilir.
+        # Bu yüzden burada sadece resize yapıyoruz, asıl düzeltmeyi aşağıda yapacağız.
+        inputs_a = self.processor(images=imageA, return_tensors="pt", do_resize=True)
+        inputs_b = self.processor(images=imageB, return_tensors="pt", do_resize=True)
+        
         pixel_values_a = inputs_a.pixel_values.to(self.device)
         pixel_values_b = inputs_b.pixel_values.to(self.device)
 
+        # 2. Modelden geçir
         with torch.no_grad():
-            # 2. Modelden geçir (Tuple döner: summary, spatial)
             _, feat1_spatial = self.model(pixel_values_a)  # [Batch, N_tokens, Channels]
-            _, feat2_spatial = self.model(pixel_values_b)  # [Batch, N_tokens, Channels]
+            _, feat2_spatial = self.model(pixel_values_b)
 
-        # 3. Şekil Düzenleme (NLC -> NCHW) - KRİTİK ADIM
-        # Model çıktısı: [Batch, Sequence_Length, Dim] -> Örn: [B, 256, 1280]
-        # Hedef çıktı:   [Batch, Dim, Height, Width]   -> Örn: [B, 1280, 16, 16]
-        
+        # 3. Şekil Düzenleme: [Batch, N, C] -> [Batch, C, H, W]
         feat1_spatial = self._reshape_to_spatial(feat1_spatial)
         feat2_spatial = self._reshape_to_spatial(feat2_spatial)
+        
+        # --- KRİTİK DÜZELTME 1: BOYUT ZORLAMA ---
+        # AttentiveEncoder (train.py argümanlarında) feat_size=16 bekliyor.
+        # Gelen veri ne olursa olsun (14x14, 37x37 vb.), onu 16x16'ya interpolate ediyoruz.
+        target_h, target_w = 16, 16
+        
+        if feat1_spatial.shape[-2:] != (target_h, target_w):
+            # print(f"DEBUG: Resizing feature map from {feat1_spatial.shape[-2:]} to (16, 16)") # İsterseniz açın
+            feat1_spatial = F.interpolate(feat1_spatial, size=(target_h, target_w), mode='bilinear', align_corners=False)
+            feat2_spatial = F.interpolate(feat2_spatial, size=(target_h, target_w), mode='bilinear', align_corners=False)
+
+        # --- KRİTİK DÜZELTME 2: NaN TEMİZLİĞİ ---
+        # Büyük modeller bazen NaN/Inf üretebilir, bu da device-side assert hatası verir.
+        if torch.isnan(feat1_spatial).any() or torch.isinf(feat1_spatial).any():
+            feat1_spatial = torch.nan_to_num(feat1_spatial, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+        if torch.isnan(feat2_spatial).any() or torch.isinf(feat2_spatial).any():
+            feat2_spatial = torch.nan_to_num(feat2_spatial, nan=0.0, posinf=1.0, neginf=-1.0)
 
         return feat1_spatial, feat2_spatial, None
 
