@@ -221,8 +221,9 @@ def main(args):
                 if ind == 0: 
                     # Sadece ilk batch için basalım ki konsol dolmasın
                     print(f"\n--- DEBUG EPOCH {epoch} ---")
-                    print(f"Tahmin Edilen (İlk Örnek): {' '.join(hypotheses)}")
-                    print(f"Gerçek Referans: {' '.join(references)}")
+                    print(hypotheses)
+                    print("---------------------------\n")
+                    print(references)
                     print("---------------------------\n")
 
             val_time = time.time() - val_start_time
