@@ -6,140 +6,12 @@ import clip
 import os
 import torch.nn.functional as F
 
-# --- maske ---
-from torchvision import transforms
+# --- Cradio ---
+import numpy as np
+from transformers import AutoModel, CLIPImageProcessor
+from sklearn.decomposition import PCA
+from scipy.ndimage import gaussian_filter
 
-class DinoMaskGenerator(nn.Module):
-    def __init__(self, model_type='dinov2_vits14'):
-        super().__init__()
-        print(f"Loading {model_type}...")
-        self.backbone = torch.hub.load('facebookresearch/dinov2', model_type)
-        self.backbone.eval()
-
-        for param in self.backbone.parameters():
-            param.requires_grad = False
-        
-        # DINOv2 için gerekli normalizasyon değerleri
-        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
-
-    def preprocess(self, img):
-        # 1. Resize (224'ün katları)
-        img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
-        # 2. Normalize
-        img = (img - self.mean) / self.std
-        return img
-
-    def forward(self, img1, img2):
-        with torch.no_grad():
-            # (Batch, 3, H, W)
-            p_img1 = self.preprocess(img1)
-            p_img2 = self.preprocess(img2)
-            
-            # Özellik Çıkarımı
-            feat1 = self.backbone.forward_features(p_img1)["x_norm_patchtokens"]
-            feat2 = self.backbone.forward_features(p_img2)["x_norm_patchtokens"]
-            
-            # Benzerlik ve Maske Hesabı (Cosine Similarity)
-            similarity = F.cosine_similarity(feat1, feat2, dim=-1)
-            mask = 1.0 - similarity # Fark ne kadar büyükse değer 1'e o kadar yakın olur
-            
-            # Kare forma dönüştürme (Grid)
-            B, N = mask.shape
-            H_grid = int(N**0.5) # Örn: 256 -> 16
-            mask = mask.view(B, 1, H_grid, H_grid)
-            
-            return mask
-
-class ClipEncoder(nn.Module):
-    def __init__(self, path = "/content/CLIPCap/RemoteCLIP-ViT-B-32.pt"):
-        super().__init__()
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        try:
-            self.model, preprocess = clip.load("ViT-B/32", device=self.device, jit=False)
-        except AttributeError:
-            pass 
-
-        # ResNet (ImageNet) İstatistikleri
-        self.register_buffer('source_mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('source_std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
-
-        # CLIP (OpenAI) İstatistikleri
-        self.register_buffer('target_mean', torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1))
-        self.register_buffer('target_std', torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1))
-
-        jit_path = path
-        print(jit_path)
-
-        if (True):
-            # HATA ÇÖZÜMÜ: torch.jit.load YERİNE torch.load kullanıyoruz
-            checkpoint = torch.load(jit_path, map_location=self.device)
-            
-            # Checkpoint yapısını kontrol et (Bazen direkt dict, bazen 'state_dict' key'i içinde olur)
-            if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
-                state_dict = checkpoint['state_dict']
-            else:
-                state_dict = checkpoint
-
-            # Temizlik: Eğer anahtarlarda 'module.' varsa (DataParallel artığı) temizle
-            clean_state_dict = {}
-            for k, v in state_dict.items():
-                new_k = k.replace("module.", "")
-                clean_state_dict[new_k] = v
-            
-            # Ağırlıkları Yükle (strict=False, versiyon farkı varsa patlamaması için)
-            # DOĞRU: Sadece fonksiyonu çağır, atama yapma
-            self.model.load_state_dict(clean_state_dict, strict=False)
-
-        else:
-            print("UYARI: JIT dosyası bulunamadı, orijinal ağırlıklar kullanılıyor.")
-
-        # --- 3. DERİN HOOK MEKANİZMASI (ÇÖZÜM BURADA) ---
-        self.features = {}
-
-        def get_activation_deep(name):
-            def hook(model, input, output):
-                self.features[name] = output.detach().clone()
-            return hook
-
-        self.model.visual.transformer.resblocks[-1].register_forward_hook(get_activation_deep('last_block'))
-
-    def forward(self, img):
-
-        img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
-
-        # 1. Denormalize (ResNet -> Raw [0,1])
-        img = img * self.source_std + self.source_mean
-        
-        # 2. Normalize (Raw -> CLIP)
-        img = (img - self.target_mean) / self.target_std
-
-        self.feature = {}
-
-        with torch.no_grad():
-            _ = self.model.encode_image(img)
-            
-        # --- 5. Veriyi İşleme (Manuel Normalizasyon) ---
-        # Transformer çıktısı: [Seq_Len, Batch, Dim] -> Genelde [50, 1, 768]
-        raw_output = self.features['last_block']
-        
-        # Şekil Düzenleme: [Seq, Batch, Dim] -> [Batch, Seq, Dim]
-        
-        raw_output = raw_output.permute(1, 0, 2) # [1, 50, 768]
-        
-        # KRİTİK ADIM: Hook'u ln_post öncesine attığımız için,
-        # LayerNorm işlemini şimdi elle yapmalıyız. Yoksa veriler normalize olmaz.
-        final_features = self.model.visual.ln_post(raw_output)
-
-        patch_tokens = final_features[:, 1:, :] 
-            
-        batch_size = patch_tokens.shape[0]     # 1
-        num_patches = patch_tokens.shape[1]    # 49 olmalı
-        embed_dim = patch_tokens.shape[2]      # 768
-        
-        grid_size = int(num_patches ** 0.5)    # 7
-
-        return patch_tokens.reshape(batch_size, grid_size, grid_size, embed_dim).permute(0, 3, 1, 2)
 
 class Encoder(nn.Module):
     """
@@ -204,19 +76,14 @@ class Encoder(nn.Module):
         elif self.network=='regnet_x_16gf': #2048,1/32H,1/32W
             cnn = models.regnet_x_16gf(pretrained=True) 
             modules = list(cnn.children())[:-2]
-        elif self.network=='clip':
-            clip = ClipEncoder()
+        
+        model_name = "nvidia/C-RADIOv4-H" 
+        # Transformers kütüphanesi ile modeli çekiyoruz (zoo.py mantığı)
+        # trust_remote_code=True kritik, çünkü özel bir mimari kullanıyor.
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(device).eval()
+        self.processor = CLIPImageProcessor.from_pretrained(model_name)
 
-        if('clip' in self.network):
-            self.model = clip
-        else:
-            self.model = nn.Sequential(*modules)
-            # Resize image to fixed size to allow input images of variable size
-            # self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
-            self.fine_tune()
-
-        # --- MASKE ---
-        self.dino = DinoMaskGenerator()
 
     def forward(self, imageA, imageB):
         """
@@ -225,13 +92,15 @@ class Encoder(nn.Module):
         :param images: images, a tensor of dimensions (batch_size, 3, image_size, image_size)
         :return: encoded images
         """
-        mask =  None
-        mask = self.dino((imageA), (imageB))
 
-        feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
-        feat2 = self.model(imageB)
+        imageA = self.processor(imageA)
+        imageB = self.processor(imageB)
 
-        return feat1, feat2, mask
+
+        feat1_sum, feat1_spatial = self.model(imageA)  # [Batch, Tokens, Channels] spatial
+        feat2_sum, feat2_spatial = self.model(imageB)  # [Batch, Tokens, Channels] spatial
+
+        return feat1_spatial, feat2_spatial, None
 
     def fine_tune(self, fine_tune=True):
         """
@@ -385,10 +254,6 @@ class AttentiveEncoder(nn.Module):
             img_sa2 = l(img_sa2, img_sa2, img_sa2, mask) + img_sa2
             # img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
             # img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
-            mask_product = mask.view(batch, 49, 1)
-            img_sa1 = img_sa1 * mask_product
-            img_sa2 = img_sa2 * mask_product
-
             img = torch.cat([img_sa1, img_sa2], dim = -1)
             # mask_double = torch.cat([mask, mask], dim = -1)
             img = m(img, img, img, mask)

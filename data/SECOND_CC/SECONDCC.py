@@ -96,29 +96,7 @@ class SECONDCCDataset(Dataset):
         except Exception as e:
             # Hata durumunda siyah resim döndür
             imgA = np.zeros((256, 256, 3), dtype=np.uint8)
-            imgB = np.zeros((256, 256, 3), dtype=np.uint8)
-
-        # [ÇÖZÜM 1] Zorunlu Resize (Tüm resimler 256x256 olmalı)
-        # Eğer resim zaten 256x256 ise cv2 çok hızlı geçer, değilse düzeltir.
-        if imgA.shape[0] != 256 or imgA.shape[1] != 256:
-            imgA = cv2.resize(imgA, (256, 256), interpolation=cv2.INTER_CUBIC)
-        if imgB.shape[0] != 256 or imgB.shape[1] != 256:
-            imgB = cv2.resize(imgB, (256, 256), interpolation=cv2.INTER_CUBIC)
-
-        # Float Dönüşümü ve Ölçekleme
-        imgA = np.asarray(imgA, np.float32) / 255.0
-        imgB = np.asarray(imgB, np.float32) / 255.0
-        
-        # (H, W, C) -> (C, H, W)
-        imgA = np.moveaxis(imgA, -1, 0)     
-        imgB = np.moveaxis(imgB, -1, 0)
-
-        # ImageNet Normalizasyonu
-        for i in range(len(self.mean)):
-            imgA[i,:,:] -= self.mean[i]
-            imgA[i,:,:] /= self.std[i]
-            imgB[i,:,:] -= self.mean[i]
-            imgB[i,:,:] /= self.std[i]      
+            imgB = np.zeros((256, 256, 3), dtype=np.uint8)  
 
         # --- 2. Token İşlemleri ve Sabitleme ---
         # [ÇÖZÜM 2] Caption sayısını sabitleme (Batch yapabilmek için)
