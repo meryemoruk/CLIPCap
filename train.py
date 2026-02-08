@@ -181,6 +181,9 @@ def main(args):
         references = list()  # references (true captions) for calculating BLEU-4 score
         hypotheses = list()  # hypotheses (predictions)
         
+        # Validation döngüsünden hemen önce bu satırı ekleyin:
+        id_to_word = {v: k for k, v in word_vocab.items()}
+
         with torch.no_grad():
             # Batches
             for ind, (feat1, feat2, token_all, _, token, token_len, _) in enumerate(val_loader):
@@ -194,26 +197,29 @@ def main(args):
                 feat1, feat2 = encoder_trans(feat1, feat2, None)
                 seq = decoder.sample(feat1, feat2, k=1)
 
+                # --- Referansları (Gerçekleri) Kelimeye Çevirme ---
                 img_token = token_all.tolist()
-                img_tokens = list(map(lambda c: [w for w in c if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}],
-                        img_token))  # remove <start> and pads
-                references.append(img_tokens)
+                img_tokens_words = []
+                for sent_ids in img_token:
+                    words = []
+                    for w_id in sent_ids:
+                        # Özel tokenlar haricindekileri al ve kelimeye çevir
+                        if w_id not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}:
+                            words.append(id_to_word[w_id])
+                    img_tokens_words.append(words)
+                references.append(img_tokens_words)
 
-                pred_seq = [w for w in seq if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}]
-                hypotheses.append(pred_seq)
+                # --- Tahminleri (Hypothesis) Kelimeye Çevirme ---
+                pred_words = []
+                for w_id in seq:
+                    if w_id not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}:
+                        pred_words.append(id_to_word[w_id])
+                hypotheses.append(pred_words)
+
                 assert len(references) == len(hypotheses)
 
-                if ind % args.print_freq == 0:
-                    pred_caption = ""
-                    ref_caption = ""
-                    for i in pred_seq:
-                        pred_caption += (list(word_vocab.keys())[i]) + " "
-                    ref_caption = ""
-                    for i in img_tokens:
-                        for j in i:
-                            ref_caption += (list(word_vocab.keys())[j]) + " "
-                        ref_caption += ".    "
             val_time = time.time() - val_start_time
+            
             # Calculate evaluation scores
             score_dict = get_eval_score(references, hypotheses)
             Bleu_1 = score_dict['Bleu_1']
