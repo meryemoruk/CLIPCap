@@ -228,12 +228,6 @@ def main(args):
             # Forward prop.
             feat1, feat2, mask = encoder(imgA, imgB)
 
-            # --- MASK SAVING ---
-            if(mask_example_count != 0):
-                visualize_results(imgA, imgB, mask, "./"+str(mask_example_count)+".png")
-                mask_example_count -= 1
-            # --- MASK SAVING ---
-
             feat1, feat2 = encoder_trans(feat1, feat2, mask)
             scores, caps_sorted, decode_lengths, sort_ind = decoder(feat1, feat2, token, token_len)
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
