@@ -95,9 +95,20 @@ class Encoder(nn.Module):
         # 1. İşlemci (Processor) ile veriyi hazırla ve GPU'ya taşı
         # Not: imageA ve imageB burada PIL Image listesi olmalıdır. 
         # Eğer DataLoader'dan Tensor geliyorsa processor kullanılmamalı, direkt resize/normalize yapılmalı.
-        inputs_a = self.processor(images=imageA, return_tensors="pt", do_resize=True)
-        inputs_b = self.processor(images=imageB, return_tensors="pt", do_resize=True)
-        
+        inputs_a = self.processor(
+            images=imageA, 
+            return_tensors="pt", 
+            do_resize=True, 
+            size={"height": 224, "width": 224}, # Kesin boyut
+            do_center_crop=True # Gerekirse kırp
+        )
+        inputs_b = self.processor(
+            images=imageB, 
+            return_tensors="pt", 
+            do_resize=True, 
+            size={"height": 224, "width": 224}, 
+            do_center_crop=True
+        )        
         pixel_values_a = inputs_a.pixel_values.to(self.device)
         pixel_values_b = inputs_b.pixel_values.to(self.device)
 
