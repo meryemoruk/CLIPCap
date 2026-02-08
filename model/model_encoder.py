@@ -81,7 +81,7 @@ class Encoder(nn.Module):
         # Transformers kütüphanesi ile modeli çekiyoruz (zoo.py mantığı)
         # trust_remote_code=True kritik, çünkü özel bir mimari kullanıyor.
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(device).eval()
+        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device).eval()
         self.processor = CLIPImageProcessor.from_pretrained(model_name)
 
 
