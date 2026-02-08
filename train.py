@@ -8,7 +8,7 @@ import argparse
 import json
 #import torchvision.transforms as transforms
 from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
-from data.SECOND_CC.SECONDCC import SECONDCCDataset
+from data.SECOND_CC.SECONDCC import SECONDCCFeaturesDataset
 from data.Dubai_CC.DubaiCC import DubaiCCDataset
 from model.model_encoder import Encoder, AttentiveEncoder
 from model.model_decoder import DecoderTransformer
@@ -27,74 +27,6 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 import numpy as np
 
-def visualize_results(img1_tensor, img2_tensor, mask_tensor, output_path="result.png"):
-    """
-    Görüntüleri görselleştirir ve kaydeder.
-    Otomatik 'Denormalization' yapar (ImageNet standartlarına göre).
-    """
-    
-    # --- 1. Batch Boyutunu Yönetme ---
-    if img1_tensor.dim() == 4: img1_use = img1_tensor[0]
-    else: img1_use = img1_tensor
-
-    if img2_tensor.dim() == 4: img2_use = img2_tensor[0]
-    else: img2_use = img2_tensor
-
-    if mask_tensor.dim() == 4: mask_use = mask_tensor[0]
-    else: mask_use = mask_tensor
-
-    # --- 2. Maskeyi Büyütme (Upsample) ---
-    target_h, target_w = img1_use.shape[1], img1_use.shape[2]
-    mask_resized = F.interpolate(mask_use.unsqueeze(0), size=(target_h, target_w), mode='bilinear', align_corners=False)
-    
-    # --- 3. Tensor -> Numpy ve Renk Kanalı Düzenleme (H, W, C) ---
-    img1_np = img1_use.detach().permute(1, 2, 0).cpu().numpy()
-    img2_np = img2_use.detach().permute(1, 2, 0).cpu().numpy()
-    mask_np = mask_resized.squeeze().detach().cpu().numpy()
-
-    # --- 4. DENORMALIZATION (ÖNEMLİ ADIM) ---
-    # ImageNet Mean ve Std değerleri (CLIP ve DINO bunları kullanır)
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
-
-    # Formül: original = (normalized * std) + mean
-    img1_np = (img1_np * std) + mean
-    img2_np = (img2_np * std) + mean
-
-    # Değerleri [0, 1] aralığına sıkıştır (Clip)
-    # Bu işlem float hatalarını temizler ve 'Clipping' uyarısını kesin çözer.
-    img1_np = np.clip(img1_np, 0, 1)
-    img2_np = np.clip(img2_np, 0, 1)
-
-    # --- 5. Çizim ---
-    plt.figure(figsize=(15, 5))
-
-    # Before Image
-    plt.subplot(1, 3, 1)
-    plt.imshow(img1_np)
-    plt.title("Önce (Before)")
-    plt.axis('off')
-
-    # After Image
-    plt.subplot(1, 3, 2)
-    plt.imshow(img2_np)
-    plt.title("Sonra (After)")
-    plt.axis('off')
-
-    # Difference Mask (Heatmap)
-    plt.subplot(1, 3, 3)
-    plt.imshow(mask_np, cmap='jet', vmin=0, vmax=1) 
-    plt.colorbar(fraction=0.046, pad=0.04)
-    plt.title("Değişim Maskesi")
-    plt.axis('off')
-
-    plt.tight_layout()
-    
-    # Kaydetme
-    plt.savefig(output_path, bbox_inches='tight')
-    plt.close()
-    print(f"Görsel kaydedildi (Düzeltilmiş): {output_path}")
-
 def main(args):
     """
     Training and validation.
@@ -107,7 +39,8 @@ def main(args):
     earlyStop = 0
 
     os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)  
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id) 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if os.path.exists(args.savepath)==False:
         os.makedirs(args.savepath)
     best_epoch  = 0
@@ -122,10 +55,6 @@ def main(args):
         word_vocab = json.load(f)
     # Initialize / load checkpoint
     if args.checkpoint is None:      
-        encoder = Encoder(args.network)   
-        encoder.fine_tune(args.fine_tune_encoder)     
-        encoder_optimizer = torch.optim.Adam(params=encoder.parameters(),
-                                            lr=args.encoder_lr) if args.fine_tune_encoder else None
         encoder_trans = AttentiveEncoder(n_layers =args.n_layers, feature_size=[args.feat_size, args.feat_size, args.encoder_dim], 
                                             heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout, network=args.network)
         encoder_trans_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()),
@@ -142,14 +71,7 @@ def main(args):
         decoder_optimizer = checkpoint['decoder_optimizer']
         encoder_trans = checkpoint['encoder_trans']
         encoder_trans_optimizer = checkpoint['encoder_trans_optimizer']
-        encoder = checkpoint['encoder']
-        encoder_optimizer = checkpoint['encoder_optimizer']
-        if args.fine_tune_encoder is True and encoder_optimizer is None:
-            encoder.fine_tune(args.fine_tune_encoder)
-            encoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder.parameters()),
-                                            lr=args.encoder_lr)
     # Move to GPU, if available
-    encoder = encoder.cuda()
     encoder_trans = encoder_trans.cuda()
     decoder = decoder.cuda()
     # Loss function
@@ -160,11 +82,10 @@ def main(args):
     print("MODEL PARAMETRE İSTATİSTİKLERİ")
     print("-" * 50)
     
-    p_encoder = count_parameters(encoder, "Encoder (Backbone)")
     p_trans = count_parameters(encoder_trans, "Attentive Encoder")
     p_decoder = count_parameters(decoder, "Decoder Transformer")
     
-    total_trainable = p_encoder + p_trans + p_decoder
+    total_trainable = p_trans + p_decoder
     print("-" * 50)
     print(f"TOPLAM EĞİTİLEBİLİR PARAMETRE: {total_trainable:,}")
     print("-" * 50)
@@ -173,10 +94,10 @@ def main(args):
     # Custom dataloaders
     if args.data_name == 'LEVIR_CC':
         train_loader = data.DataLoader(
-            LEVIRCCDataset(args.data_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            LEVIRCCDataset(args.feature_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.train_batchsize, shuffle=True, num_workers=args.workers, pin_memory=True)
         val_loader = data.DataLoader(
-            LEVIRCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            LEVIRCCDataset(args.feature_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     
     elif args.data_name == 'Dubai_CC':
@@ -188,13 +109,12 @@ def main(args):
             batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     elif args.data_name == 'SECOND_CC':
         train_loader = data.DataLoader(
-            SECONDCCDataset(args.data_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            SECONDCCFeaturesDataset(args.feature_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.train_batchsize, shuffle=True, num_workers=args.workers, pin_memory=True)
         val_loader = data.DataLoader(
-            SECONDCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            SECONDCCFeaturesDataset(args.feature_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     
-    encoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=5, gamma=0.5) if args.fine_tune_encoder else None
     encoder_trans_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_trans_optimizer, step_size=5, gamma=0.5)
     decoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(decoder_optimizer, step_size=5, gamma=0.5)
     l_resizeA = torch.nn.Upsample(size = (256, 256), mode ='bilinear', align_corners = True)
@@ -205,17 +125,20 @@ def main(args):
     mask_example_count = 9
     for epoch in range(start_epoch, args.num_epochs):        
         # Batches
-        for id, (imgA, imgB, _, _, token, token_len, _) in enumerate(train_loader):
+        for i, (feat1, feat2, token_all, _, token, token_len, _) in enumerate(train_loader):
             #if id == 20:
             #    break
+
+            feat1 = feat1.to(device) # [Batch, 1280, 16, 16]
+            feat2 = feat2.to(device)
+            token = token.to(device) # [Batch, 40]
+            token_len = token_len.to(device)
+
             start_time = time.time()
             decoder.train()  # train mode (dropout and batchnorm is used)
-            encoder.train()
             encoder_trans.train()
             decoder_optimizer.zero_grad()
             encoder_trans_optimizer.zero_grad()
-            if encoder_optimizer is not None:
-                encoder_optimizer.zero_grad()
 
             # Move to GPU, if available
             imgA = imgA.cuda()
@@ -225,10 +148,8 @@ def main(args):
                 imgB = l_resizeB(imgB)
             token = token.squeeze(1).cuda()
             token_len = token_len.cuda()
-            # Forward prop.
-            feat1, feat2, mask = encoder(imgA, imgB)
 
-            feat1, feat2 = encoder_trans(feat1, feat2, mask)
+            feat1, feat2 = encoder_trans(feat1, feat2, None)
             scores, caps_sorted, decode_lengths, sort_ind = decoder(feat1, feat2, token, token_len)
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
             targets = caps_sorted[:, 1:]
@@ -242,14 +163,10 @@ def main(args):
             if args.grad_clip is not None:
                 torch.nn.utils.clip_grad_value_(decoder.parameters(), args.grad_clip)
                 torch.nn.utils.clip_grad_value_(encoder_trans.parameters(), args.grad_clip)
-                if encoder_optimizer is not None:
-                    torch.nn.utils.clip_grad_value_(encoder.parameters(), args.grad_clip)
 
             # Update weights                      
             decoder_optimizer.step()
             encoder_trans_optimizer.step()
-            if encoder_optimizer is not None:
-                encoder_optimizer.step()
 
             # Keep track of metrics     
             hist[index_i,0] = time.time() - start_time #batch_time        
@@ -268,8 +185,6 @@ def main(args):
         # One epoch's validation
         decoder.eval()  # eval mode (no dropout or batchnorm)
         encoder_trans.eval()
-        if encoder is not None:
-            encoder.eval()
 
         val_start_time = time.time()
         references = list()  # references (true captions) for calculating BLEU-4 score
@@ -286,9 +201,7 @@ def main(args):
                     imgB = l_resizeB(imgB)
                 token_all = token_all.squeeze(0).cuda()
                 # Forward prop.
-                if encoder is not None:
-                    feat1, feat2, mask = encoder(imgA, imgB)
-                feat1, feat2 = encoder_trans(feat1, feat2, mask)
+                feat1, feat2 = encoder_trans(feat1, feat2, None)
                 seq = decoder.sample(feat1, feat2, k=1)
 
                 img_token = token_all.tolist()
@@ -329,9 +242,7 @@ def main(args):
         decoder_lr_scheduler.step()
         #print(decoder_optimizer.param_groups[0]['lr'])
         encoder_trans_lr_scheduler.step()
-        if encoder_lr_scheduler is not None:
-            encoder_lr_scheduler.step()
-            #print(encoder_optimizer.param_groups[0]['lr'])
+
         # Check if there was an improvement        
         if  Avg > best_avg:
             best_avg = Avg
@@ -346,7 +257,7 @@ def main(args):
 
             #save_checkpoint                
             print('Save Model')  
-            state = {'encoder_dict': encoder.state_dict(), 
+            state = { 
                     'encoder_trans_dict': encoder_trans.state_dict(),   
                     'decoder_dict': decoder.state_dict()
                     }                     
@@ -367,6 +278,7 @@ if __name__ == '__main__':
 
     # Data parameters
     parser.add_argument('--data_folder', default='./data/LEVIR_CC/images',help='folder with data files')
+    parser.add_argument('--feature_folder', default='./data/LEVIR_CC/images',help='folder with data files')
     parser.add_argument('--list_path', default='./data/LEVIR_CC/', help='path of the data lists')
     parser.add_argument('--token_folder', default='./data/LEVIR_CC/tokens/', help='folder with token files')
     parser.add_argument('--vocab_file', default='vocab', help='path of the data lists')
