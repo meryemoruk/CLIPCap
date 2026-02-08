@@ -88,19 +88,46 @@ class Encoder(nn.Module):
     def forward(self, imageA, imageB):
         """
         Forward propagation.
-
-        :param images: images, a tensor of dimensions (batch_size, 3, image_size, image_size)
-        :return: encoded images
+        Inputs (imageA, imageB) should be PIL Images or list of PIL images.
+        If they are already Tensors, you should bypass self.processor!
         """
+        
+        # 1. İşlemci (Processor) ile veriyi hazırla ve GPU'ya taşı
+        # Not: imageA ve imageB burada PIL Image listesi olmalıdır. 
+        # Eğer DataLoader'dan Tensor geliyorsa processor kullanılmamalı, direkt resize/normalize yapılmalı.
+        inputs_a = self.processor(images=imageA, return_tensors="pt", do_resize=True)
+        inputs_b = self.processor(images=imageB, return_tensors="pt", do_resize=True)
+        
+        pixel_values_a = inputs_a.pixel_values.to(self.device)
+        pixel_values_b = inputs_b.pixel_values.to(self.device)
 
-        imageA = self.processor(imageA)
-        imageB = self.processor(imageB)
+        with torch.no_grad():
+            # 2. Modelden geçir (Tuple döner: summary, spatial)
+            _, feat1_spatial = self.model(pixel_values_a)  # [Batch, N_tokens, Channels]
+            _, feat2_spatial = self.model(pixel_values_b)  # [Batch, N_tokens, Channels]
 
-
-        feat1_sum, feat1_spatial = self.model(imageA)  # [Batch, Tokens, Channels] spatial
-        feat2_sum, feat2_spatial = self.model(imageB)  # [Batch, Tokens, Channels] spatial
+        # 3. Şekil Düzenleme (NLC -> NCHW) - KRİTİK ADIM
+        # Model çıktısı: [Batch, Sequence_Length, Dim] -> Örn: [B, 256, 1280]
+        # Hedef çıktı:   [Batch, Dim, Height, Width]   -> Örn: [B, 1280, 16, 16]
+        
+        feat1_spatial = self._reshape_to_spatial(feat1_spatial)
+        feat2_spatial = self._reshape_to_spatial(feat2_spatial)
 
         return feat1_spatial, feat2_spatial, None
+
+    def _reshape_to_spatial(self, x):
+        """
+        [B, N, C] formatını [B, C, H, W] formatına çevirir.
+        """
+        B, N, C = x.shape
+        H = W = int(N ** 0.5) # Karekök alarak Grid boyutunu bul (örn: 14x14 veya 16x16)
+        
+        # 1. [B, N, C] -> [B, H, W, C]
+        x = x.reshape(B, H, W, C)
+        
+        # 2. [B, H, W, C] -> [B, C, H, W] (Permute)
+        x = x.permute(0, 3, 1, 2)
+        return x
 
     def fine_tune(self, fine_tune=True):
         """
