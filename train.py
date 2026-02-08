@@ -140,15 +140,6 @@ def main(args):
             decoder_optimizer.zero_grad()
             encoder_trans_optimizer.zero_grad()
 
-            # Move to GPU, if available
-            imgA = imgA.cuda()
-            imgB = imgB.cuda()
-            if args.data_name == 'Dubai_CC':
-                imgA = l_resizeA(imgA)
-                imgB = l_resizeB(imgB)
-            token = token.squeeze(1).cuda()
-            token_len = token_len.cuda()
-
             feat1, feat2 = encoder_trans(feat1, feat2, None)
             scores, caps_sorted, decode_lengths, sort_ind = decoder(feat1, feat2, token, token_len)
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
@@ -192,14 +183,13 @@ def main(args):
         
         with torch.no_grad():
             # Batches
-            for ind, (imgA, imgB, token_all, token_all_len, _, _, _) in enumerate(val_loader):
-                # Move to GPU, if available
-                imgA = imgA.cuda()
-                imgB = imgB.cuda()
-                if args.data_name == 'Dubai_CC':
-                    imgA = l_resizeA(imgA)
-                    imgB = l_resizeB(imgB)
-                token_all = token_all.squeeze(0).cuda()
+            for ind, (feat1, feat2, token_all, _, token, token_len, _) in enumerate(val_loader):
+                
+                feat1 = feat1.to(device) # [Batch, 1280, 16, 16]
+                feat2 = feat2.to(device)
+                token = token.to(device) # [Batch, 40]
+                token_len = token_len.to(device)
+
                 # Forward prop.
                 feat1, feat2 = encoder_trans(feat1, feat2, None)
                 seq = decoder.sample(feat1, feat2, k=1)
