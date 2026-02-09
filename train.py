@@ -220,7 +220,7 @@ def main(args):
                 # Forward prop.
                 if encoder is not None:
                     feat1, feat2, mask = encoder(imgA, imgB)
-                feat1, feat2 = encoder_trans(feat1, feat2, mask)
+                feat1, feat2 = encoder_trans(feat1, feat2)
                 seq = decoder.sample(feat1, feat2, k=1)
 
                 img_token = token_all.tolist()
