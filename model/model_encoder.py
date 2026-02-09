@@ -441,18 +441,45 @@ class Encoder(nn.Module):
             modules = list(cnn.children())[:-2]
         elif self.network=='clip':
             clip = ClipEncoder()
+        elif self.network=='dino':
+            dino = DinoEncoder()
+            
+        # train_dino.py'de dropout=0.1 varsayılan olarak kullanılıyor.
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self.dino_mlp = DinoMLP(dropout=0.1).to(device)
+
+        # 2. Checkpoint Dosyasını Yükleyin
+        checkpoint_path = "./models_checkpoint/SECOND_CC_Best_Recall.pth" # Kendi dosya yolunuzu yazın
+
+        if os.path.exists(checkpoint_path):
+            print(f"Loading checkpoint: {checkpoint_path}")
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+            
+            # 3. Ağırlıkları Yükleyin (Strict=True önerilir, birebir eşleşme için)
+            try:
+                self.dino_mlp.load_state_dict(checkpoint['mlp_state_dict'])
+                print("✅ DinoMLP başarıyla yüklendi.")
+            except KeyError:
+                print("❌ HATA: Checkpoint içinde 'mlp_state_dict' bulunamadı.")
+                
+        else:
+            print(f"❌ Dosya bulunamadı: {checkpoint_path}")
+
+        # 4. Modelleri Eval Moduna Alın (Test/Inference için şart)
+        self.dino_mlp.eval()
 
         if('clip' in self.network):
             self.model = clip
+        elif('dino' in self.network):
+            self.model = dino
         else:
             self.model = nn.Sequential(*modules)
             # Resize image to fixed size to allow input images of variable size
             # self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
             self.fine_tune()
 
-        # --- MASKE ---
-        self.dino = DinoMaskGenerator()
-
+       
     def forward(self, imageA, imageB):
         """
         Forward propagation.
@@ -461,10 +488,14 @@ class Encoder(nn.Module):
         :return: encoded images
         """
         mask =  None
-        mask = self.dino((imageA), (imageB))
+        # mask = self.dino((imageA), (imageB))
 
         feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
         feat2 = self.model(imageB)
+
+        feat1 = self.dino_mlp(feat1)  # (batch_size, 2048, image_size/32, image_size/32)
+        feat2 = self.dino_mlp(feat2)
+
 
         return feat1, feat2, mask
 
