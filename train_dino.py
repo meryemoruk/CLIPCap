@@ -159,7 +159,7 @@ def main(args):
     # Epochs
     for epoch in range(start_epoch, args.num_epochs):        
         # Batches
-        for id, (imgA, imgB, _, _, token, token_len, _) in enumerate(train_loader):
+        for id, (imgA, imgB, _, _, token, token_len, raw_captions) in enumerate(train_loader):
             #if id == 20:
             #    break
             start_time = time.time()
