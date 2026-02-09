@@ -81,6 +81,8 @@ class DinoEncoder(nn.Module):
 
     def forward(self, img):
         # Giriş: [Batch, 3, H, W]
+        if img.shape[-2:] != (224, 224):
+            img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
 
         with torch.no_grad():
             # forward_features çıktısı bir sözlüktür.
