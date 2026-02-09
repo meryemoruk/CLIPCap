@@ -473,6 +473,9 @@ class Encoder(nn.Module):
             self.model = clip
         elif('dino' in self.network):
             self.model = dino
+            for param in self.dino_mlp.parameters():
+                param.requires_grad = False
+            self.dino_mlp.eval()
         else:
             self.model = nn.Sequential(*modules)
             # Resize image to fixed size to allow input images of variable size
@@ -493,9 +496,12 @@ class Encoder(nn.Module):
         feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
         feat2 = self.model(imageB)
 
+        print(feat1.shape)
+
         feat1 = self.dino_mlp(feat1)  # (batch_size, 2048, image_size/32, image_size/32)
         feat2 = self.dino_mlp(feat2)
 
+        print(feat1.shape)
 
         return feat1, feat2, mask
 
