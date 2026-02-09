@@ -496,12 +496,11 @@ class Encoder(nn.Module):
         feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
         feat2 = self.model(imageB)
 
-        print(feat1.shape)
-
         feat1 = self.dino_mlp(feat1)  # (batch_size, 2048, image_size/32, image_size/32)
         feat2 = self.dino_mlp(feat2)
 
-        print(feat1.shape)
+        feat1 = feat1.permute(0, 3, 1, 2)
+        feat2 = feat2.permute(0, 3, 1, 2)
 
         return feat1, feat2, mask
 
