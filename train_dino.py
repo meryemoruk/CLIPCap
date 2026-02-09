@@ -120,9 +120,7 @@ def main(args):
     
     # --- SCHEDULER DÜZELTME ---
     # ReduceLROnPlateau: Skor (mode='max') artmazsa LR düşürür.
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=3, verbose=True
-    )
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
 
     l_resizeA = torch.nn.Upsample(size = (256, 256), mode ='bilinear', align_corners = True)
     l_resizeB = torch.nn.Upsample(size = (256, 256), mode ='bilinear', align_corners = True)
