@@ -51,6 +51,239 @@ class DinoMaskGenerator(nn.Module):
             
             return mask
 
+class DinoEncoder(nn.Module):
+    def __init__(self, frozen=True):
+        super().__init__()
+        # 1. DINOv2 Base Modelini Yükle (Çıktı boyutu: 768)
+        # 'dinov2_vitb14': ViT-Base, Patch Size 14
+        print("Loading DINOv2 (ViT-B/14)...")
+        self.backbone = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14')
+        
+        # 2. Modeli Dondur (Eğitilmesini istemiyorsanız)
+        if frozen:
+            self.backbone.eval()
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+        
+        # 3. Normalizasyon Değerleri (ImageNet Standartları)
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+    def preprocess(self, img):
+        # DINOv2 patch size 14 kullanır. 
+        # 16x16 çıktı almak için: 16 * 14 = 224 piksel gerekir.
+        if img.shape[-2:] != (224, 224):
+            img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
+        
+        # Normalizasyon
+        img = (img - self.mean) / self.std
+        return img
+
+    def forward(self, img):
+        # Giriş: [Batch, 3, H, W]
+
+        with torch.no_grad():
+            # forward_features çıktısı bir sözlüktür.
+            # "x_norm_patchtokens": [Batch, N_Patches, 768]
+            output = self.backbone.forward_features(img)
+            patch_tokens = output["x_norm_patchtokens"]
+            
+        # Şekil Düzenleme
+        B, N, C = patch_tokens.shape # Örn: B, 256, 768
+        
+        # Grid Boyutunu Hesapla (N=256 ise H=16)
+        H_grid = int(N**0.5) 
+        
+        # [Batch, N, 768] -> [Batch, 16, 16, 768]
+        # Bu format Transformer/MLP için uygundur.
+        feature_grid = patch_tokens.reshape(B, H_grid, H_grid, C)
+        
+        return feature_grid
+
+class DinoMLP(nn.Module):
+    def __init__(self, input_dim=768, output_dim=768, expansion_factor=4, dropout=0.1):
+        """
+        DINOv2 özellikleri için Hizalama (Alignment) Katmanı.
+        
+        Args:
+            input_dim (int): DINOv2 çıktı boyutu (Base: 768, Small: 384, Large: 1024)
+            output_dim (int): Modelin devamında kullanılacak boyut. 
+                              - Stage 2'ye aktarırken genelde input_dim ile aynı (768) tutulur.
+                              - CLIP Loss hesaplarken CLIP boyutuna (512) indirilir.
+            expansion_factor (int): Gizli katman genişliği (Genelde 4 katı).
+            dropout (float): Ezberlemeyi önlemek için dropout oranı.
+        """
+        super().__init__()
+        
+        hidden_dim = int(input_dim * expansion_factor)
+        
+        self.net = nn.Sequential(
+            # 1. Genişletme (Linear)
+            nn.Linear(input_dim, hidden_dim),
+            
+            # 2. Normalizasyon (Eğitim kararlılığı için kritik)
+            nn.LayerNorm(hidden_dim),
+            
+            # 3. Aktivasyon (ReLU yerine modern GELU)
+            nn.GELU(),
+            
+            # 4. Dropout
+            nn.Dropout(dropout),
+            
+            # 5. İzdüşüm / Sıkıştırma (Linear)
+            nn.Linear(hidden_dim, output_dim)
+        )
+        
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.weight, 1.0)
+            nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # x shape: [Batch, Patches, Dim] -> [B, 256, 768]
+        return self.net(x)
+
+class DinoProjector(nn.Module):
+    def __init__(self, input_dim=768, output_dim=512):
+        """
+        DINOv2 özelliklerini CLIP kaybı (loss) hesaplamak için hazırlar.
+        
+        Args:
+            input_dim (int): DINOv2 özellik boyutu (Base model: 768)
+            output_dim (int): CLIP metin embedding boyutu (Genelde 512)
+        """
+        super().__init__()
+        
+        # Sadece boyutu değiştiren Linear katman (Projector Head)
+        self.projector = nn.Linear(input_dim, output_dim)
+        
+        # Ağırlık başlatma (Xavier - Eğitim kararlılığı için)
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.xavier_uniform_(self.projector.weight)
+        if self.projector.bias is not None:
+            nn.init.constant_(self.projector.bias, 0)
+
+    def forward(self, x):
+        """
+        Args:
+            x: [Batch, H, W, C] formatında DINO özellikleri. Örn: [B, 16, 16, 768]
+               veya [Batch, N, C] formatında. Örn: [B, 256, 768]
+        Returns:
+            projected: [Batch, 512] boyunda CLIP uyumlu vektör.
+        """
+        
+        # 1. Pooling (Global Average)
+        # Eğer giriş [B, 16, 16, 768] ise -> Spatial boyutlar (1 ve 2) üzerinden ortalama al
+        if x.ndim == 4:
+            pooled = x.mean(dim=(1, 2)) # Sonuç: [Batch, 768]
+            
+        # Eğer giriş [B, 256, 768] ise -> Patch boyutu (1) üzerinden ortalama al
+        elif x.ndim == 3:
+            pooled = x.mean(dim=1)      # Sonuç: [Batch, 768]
+        else:
+            # Zaten [B, 768] ise dokunma
+            pooled = x
+
+        # 2. Projection (Loss için boyut indirgeme)
+        # [Batch, 768] -> [Batch, 512]
+        projected = self.projector(pooled)
+        
+        return projected
+
+class ClipLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # CLIP'in orijinal başlangıç değeri (np.log(1 / 0.07))
+        # Bu parametre eğitilebilir olmalı (requires_grad=True)
+        self.logit_scale = nn.Parameter(torch.ones([]) * 2.6592)
+
+    def forward(self, image_features, text_features):
+        """
+        image_features: [Batch, 512] (Normalize edilmiş olmalı)
+        text_features:  [Batch, 512] (Normalize edilmiş olmalı)
+        """
+        
+        # 1. Normalizasyon Kontrolü (Güvenlik için tekrar yapabiliriz)
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+
+        # 2. Logit Scale'i al (Exp yaparak pozitif olmasını garantile)
+        # Maksimum değer 100 olacak şekilde clip'lemek eğitimi stabilize eder.
+        logit_scale = self.logit_scale.exp().clamp(max=100)
+
+        # 3. Benzerlik Matrisi Hesapla (Cosine Similarity)
+        # [B, 512] @ [512, B] -> [B, B]
+        logits_per_image = logit_scale * image_features @ text_features.t()
+        
+        # Transpozu: Text -> Image logits
+        logits_per_text = logits_per_image.t()
+
+        # 4. Etiketler (Ground Truth)
+        # 0, 1, 2, ..., Batch_Size-1 (Köşegenler doğrudur)
+        batch_size = image_features.shape[0]
+        device = image_features.device
+        labels = torch.arange(batch_size, dtype=torch.long, device=device)
+
+        # 5. İki Yönlü Cross Entropy Loss
+        loss_i = F.cross_entropy(logits_per_image, labels) # Resim için doğru metni bul
+        loss_t = F.cross_entropy(logits_per_text, labels)  # Metin için doğru resmi bul
+
+        # 6. Simetrik Loss (Ortalama)
+        total_loss = (loss_i + loss_t) / 2
+        
+        return total_loss
+
+class RSCLIPTextEncoder(nn.Module):
+    def __init__(self, model_name="ViT-B/32", checkpoint_path="RemoteCLIP-ViT-B-32.pt", device="cuda"):
+        super().__init__()
+        print(f"Loading RemoteCLIP Text Encoder ({model_name})...")
+        
+        # 1. Standart CLIP Mimarisi Yükle (Mimari iskeletini oluşturur)
+        model, _ = clip.load(model_name, device=device, jit=False)
+        
+        # 2. RemoteCLIP Ağırlıklarını Yükle
+        if checkpoint_path:
+            print(f"Loading weights from {checkpoint_path}")
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+            
+            # Eğer checkpoint 'state_dict' anahtarı içindeyse oradan al, yoksa direkt al
+            if 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            else:
+                state_dict = checkpoint
+            
+            # 'module.' öneklerini temizle (DataParallel artığı olabilir)
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                new_state_dict[k.replace("module.", "")] = v
+                
+            # Ağırlıkları modele giydir (Strict=False, visual encoder farklılıklarını yoksaymak için)
+            msg = model.load_state_dict(new_state_dict, strict=False)
+            print(f"Weights loaded: {msg}")
+
+        # 3. Sadece Text Encoder'ı al, Visual kısmı sil
+        self.text_encoder = model
+        
+        # 4. Dondur (Freeze)
+        for param in self.text_encoder.parameters():
+            param.requires_grad = False
+            
+        self.device = device
+
+    def forward(self, text_tokens):
+        with torch.no_grad():
+            text_features = self.text_encoder.encode_text(text_tokens)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        return text_features
+
 class ClipEncoder(nn.Module):
     def __init__(self, path = "/content/CLIPCap/RemoteCLIP-ViT-B-32.pt"):
         super().__init__()
@@ -349,27 +582,12 @@ class AttentiveEncoder(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, img1, img2, mask=None):
+    def forward(self, img1, img2):
         batch, c, h, w = img1.shape
-
-        # --- KRİTİK DÜZELTME: Maske Boyutlandırma ---
-        if mask is not None:
-            # 1. Maskeyi, mevcut özellik haritası boyutuna (h, w) getir (Örn: 7x7)
-            # DINO (16x16) -> CLIP (7x7)
-            if mask.shape[-2:] != (h, w):
-                mask = F.interpolate(mask, size=(h, w), mode='nearest')
-            
-            # 2. Transformer'ın anlayacağı formata (Flatten) çevir
-            # (Batch, 1, h, w) -> (Batch, 1, 1, h*w) -> (Batch, 1, 1, 49)
-            # Bu format, (Batch, Heads, 49, 49) matrisiyle işlem yapmaya uygundur.
-            mask = mask.view(batch, 1, 1, h * w)
-        # --------------------------------------------
-
-        pos_h = torch.arange(h).to(img1.device)
-        pos_w = torch.arange(w).to(img1.device)
+        pos_h = torch.arange(h).cuda()
+        pos_w = torch.arange(w).cuda()
         embed_h = self.w_embedding(pos_h)
         embed_w = self.h_embedding(pos_w)
-
         pos_embedding = torch.cat([embed_w.unsqueeze(0).repeat(h, 1, 1),
                                        embed_h.unsqueeze(1).repeat(1, w, 1)], 
                                        dim = -1)                            
@@ -381,21 +599,12 @@ class AttentiveEncoder(nn.Module):
         img_sa1, img_sa2 = img1, img2
 
         for (l, m) in self.selftrans:           
-            img_sa1 = l(img_sa1, img_sa1, img_sa1, mask) + img_sa1
-            img_sa2 = l(img_sa2, img_sa2, img_sa2, mask) + img_sa2
-            # img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
-            # img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
-            mask_product = mask.view(batch, 49, 1)
-            img_sa1 = img_sa1 * mask_product
-            img_sa2 = img_sa2 * mask_product
-
+            img_sa1 = l(img_sa1, img_sa1, img_sa1) + img_sa1
+            img_sa2 = l(img_sa2, img_sa2, img_sa2) + img_sa2
             img = torch.cat([img_sa1, img_sa2], dim = -1)
-            # mask_double = torch.cat([mask, mask], dim = -1)
-            img = m(img, img, img, mask)
-            img_sa1 = img[:,:,:c] + img1 #+ img_ca1
-            img_sa2 = img[:,:,c:] + img2 #+ img_ca2
-            # img_sa1 = self.last_norm1(img_sa1)
-            # img_sa2 = self.last_norm2(img_sa2)
+            img = m(img, img, img)
+            img_sa1 = img[:,:,:c] + img1
+            img_sa2 = img[:,:,c:] + img2
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
         img2 = img_sa2.reshape(batch, h, w, c).transpose(-1, 1)
