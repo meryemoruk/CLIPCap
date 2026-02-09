@@ -205,7 +205,7 @@ def main(args):
                 text_inputs = clip.tokenize(raw_captions, truncate=True).cuda()
                 
                 # Text Encoder
-                text_embeds = text_encoder(text_inputs)
+                text_embeds = text_encoder(text_inputs).float()
                 # Normalize et
                 text_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True)
 
