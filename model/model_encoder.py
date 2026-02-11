@@ -362,7 +362,7 @@ class AttentiveEncoder(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, img1, img2, mask=None):
-        batch, c, h, w = img1.shape
+        
 
         # # --- KRİTİK DÜZELTME: Maske Boyutlandırma ---
         # if mask is not None:
@@ -379,6 +379,8 @@ class AttentiveEncoder(nn.Module):
 
         img1 = self.maskedsizetonormal(img1)
         img2 = self.maskedsizetonormal(img2)
+
+        batch, c, h, w = img1.shape
 
         pos_h = torch.arange(h).to(img1.device)
         pos_w = torch.arange(w).to(img1.device)
