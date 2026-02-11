@@ -221,6 +221,11 @@ class Encoder(nn.Module):
 
         mask =  None
         mask = self.dino((imageA), (imageB))
+        
+        print("mask.shape")
+        print(mask.shape)
+        print("imageA.shape")
+        print(imageA.shape)
 
         maskedA = imageA * mask
         maskedB = imageB * mask
