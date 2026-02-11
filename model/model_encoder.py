@@ -24,8 +24,6 @@ class DinoMaskGenerator(nn.Module):
         self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
     def preprocess(self, img):
-        # 1. Resize (224'ün katları)
-        img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
         # 2. Normalize
         img = (img - self.mean) / self.std
         return img
@@ -59,10 +57,6 @@ class ClipEncoder(nn.Module):
             self.model, preprocess = clip.load("ViT-L/14", device=self.device, jit=False)
         except AttributeError:
             pass 
-
-        # ResNet (ImageNet) İstatistikleri
-        self.register_buffer('source_mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('source_std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
         # CLIP (OpenAI) İstatistikleri
         self.register_buffer('target_mean', torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1))
@@ -105,11 +99,6 @@ class ClipEncoder(nn.Module):
         self.model.visual.transformer.resblocks[-1].register_forward_hook(get_activation_deep('last_block'))
 
     def forward(self, img):
-
-        img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
-
-        # 1. Denormalize (ResNet -> Raw [0,1])
-        img = img * self.source_std + self.source_mean
         
         # 2. Normalize (Raw -> CLIP)
         img = (img - self.target_mean) / self.target_std
@@ -225,6 +214,11 @@ class Encoder(nn.Module):
         :param images: images, a tensor of dimensions (batch_size, 3, image_size, image_size)
         :return: encoded images
         """
+
+        # 1. Resize (224'ün katları)
+        imageA = F.interpolate(imageA, size=(224, 224), mode='bicubic', align_corners=False)
+        imageB = F.interpolate(imageB, size=(224, 224), mode='bicubic', align_corners=False)
+
         mask =  None
         mask = self.dino((imageA), (imageB))
 
