@@ -227,16 +227,16 @@ class Encoder(nn.Module):
         maskedA = imageA * mask
         maskedB = imageB * mask
 
-        feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
-        feat2 = self.model(imageB)
+        # feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
+        # feat2 = self.model(imageB)
 
         maskedfeat1 = self.model(maskedA)  # (batch_size, 2048, image_size/32, image_size/32)
         maskedfeat2 = self.model(maskedB)
 
-        feat1_final = torch.cat([feat1, maskedfeat1], dim=1)
-        feat2_final = torch.cat([feat2, maskedfeat2], dim=1)
+        # maskedfeat1 = torch.cat([feat1, maskedfeat1], dim=1)
+        # maskedfeat2 = torch.cat([feat2, maskedfeat2], dim=1)
 
-        return feat1_final, feat2_final, mask
+        return maskedfeat1, maskedfeat2, None
 
     def fine_tune(self, fine_tune=True):
         """
@@ -344,13 +344,13 @@ class AttentiveEncoder(nn.Module):
         # self.last_norm1 = nn.LayerNorm(channels)
         # self.last_norm2 = nn.LayerNorm(channels)
 
-        self.maskedsizetonormal = nn.Sequential(
-            nn.Conv2d(channels * 2, channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(channels),
-            nn.ReLU(inplace=True) 
-        )
+        # self.maskedsizetonormal = nn.Sequential(
+        #     nn.Conv2d(channels * 2, channels, kernel_size=1, bias=False),
+        #     nn.BatchNorm2d(channels),
+        #     nn.ReLU(inplace=True) 
+        # )
 
-        self.maskedsizetonormal = self.maskedsizetonormal.half()
+        # self.maskedsizetonormal = self.maskedsizetonormal.half()
 
         
         self._reset_parameters()
@@ -377,8 +377,8 @@ class AttentiveEncoder(nn.Module):
         #     mask = mask.view(batch, 1, 1, h * w)
         # # --------------------------------------------
 
-        img1 = self.maskedsizetonormal(img1)
-        img2 = self.maskedsizetonormal(img2)
+        # img1 = self.maskedsizetonormal(img1)
+        # img2 = self.maskedsizetonormal(img2)
 
         batch, c, h, w = img1.shape
 
