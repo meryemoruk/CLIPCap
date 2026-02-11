@@ -228,10 +228,19 @@ class Encoder(nn.Module):
         mask =  None
         mask = self.dino((imageA), (imageB))
 
+        maskedA = imageA * mask
+        maskedB = imageB * mask
+
         feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
         feat2 = self.model(imageB)
 
-        return feat1, feat2, mask
+        maskedfeat1 = self.model(maskedA)  # (batch_size, 2048, image_size/32, image_size/32)
+        maskedfeat2 = self.model(maskedB)
+
+        feat1_final = torch.cat([feat1, maskedfeat1], dim=1)
+        feat2_final = torch.cat([feat2, maskedfeat2], dim=1)
+
+        return feat1_final, feat2_final, mask
 
     def fine_tune(self, fine_tune=True):
         """

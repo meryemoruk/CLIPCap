@@ -212,6 +212,13 @@ class DecoderTransformer(nn.Module):
         self.wdc = nn.Linear(feature_dim, vocab_size)
         self.dropout = nn.Dropout(p=self.dropout)
         self.cos = torch.nn.CosineSimilarity(dim=1)
+
+        self.maskedsizetonormal = nn.Sequential(
+            nn.Conv2d(encoder_dim * 2, encoder_dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(encoder_dim),
+            nn.ReLU(inplace=True) 
+        )
+
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -229,6 +236,9 @@ class DecoderTransformer(nn.Module):
         :param encoded_captions: a tensor of dimension (batch_size, max_caption_length)
         :param caption_lengths: a tensor of dimension (batch_size)
         """
+        x1 = self.maskedsizetonormal(x1)
+        x2 = self.maskedsizetonormal(x2)
+
         x_sam = self.cos(x1, x2)
         x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) #(batch_size, 2channel, enc_image_size, enc_image_size)
         x = self.LN(self.Conv1(x))
