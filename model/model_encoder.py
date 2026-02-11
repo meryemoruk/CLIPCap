@@ -350,6 +350,8 @@ class AttentiveEncoder(nn.Module):
             nn.ReLU(inplace=True) 
         )
 
+        self.maskedsizetonormal = self.maskedsizetonormal.half()
+
         
         self._reset_parameters()
 
