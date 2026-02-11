@@ -222,10 +222,7 @@ class Encoder(nn.Module):
         mask =  None
         mask = self.dino((imageA), (imageB))
         
-        print("mask.shape")
-        print(mask.shape)
-        print("imageA.shape")
-        print(imageA.shape)
+        mask = F.interpolate(mask, size=(224, 224), mode='bicubic')
 
         maskedA = imageA * mask
         maskedB = imageB * mask
