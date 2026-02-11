@@ -56,7 +56,7 @@ class ClipEncoder(nn.Module):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         try:
-            self.model, preprocess = clip.load("ViT-L-14", device=self.device, jit=False)
+            self.model, preprocess = clip.load("ViT-L/14", device=self.device, jit=False)
         except AttributeError:
             pass 
 
