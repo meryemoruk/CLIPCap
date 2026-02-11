@@ -103,7 +103,15 @@ class SECONDCCDataset(Dataset):
         if imgA.shape[0] != 256 or imgA.shape[1] != 256:
             imgA = cv2.resize(imgA, (256, 256), interpolation=cv2.INTER_CUBIC)
         if imgB.shape[0] != 256 or imgB.shape[1] != 256:
-            imgB = cv2.resize(imgB, (256, 256), interpolation=cv2.INTER_CUBIC)     
+            imgB = cv2.resize(imgB, (256, 256), interpolation=cv2.INTER_CUBIC)
+
+        # Float Dönüşümü ve Ölçekleme
+        imgA = np.asarray(imgA, np.float32) / 255.0
+        imgB = np.asarray(imgB, np.float32) / 255.0
+        
+        # (H, W, C) -> (C, H, W)
+        imgA = np.moveaxis(imgA, -1, 0)     
+        imgB = np.moveaxis(imgB, -1, 0)
 
         # --- 2. Token İşlemleri ve Sabitleme ---
         # [ÇÖZÜM 2] Caption sayısını sabitleme (Batch yapabilmek için)
