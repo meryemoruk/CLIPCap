@@ -344,7 +344,12 @@ class AttentiveEncoder(nn.Module):
         # self.last_norm1 = nn.LayerNorm(channels)
         # self.last_norm2 = nn.LayerNorm(channels)
 
-         
+        self.maskedsizetonormal = nn.Sequential(
+            nn.Conv2d(channels * 2, channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True) 
+        )
+
         
         self._reset_parameters()
 
@@ -369,6 +374,9 @@ class AttentiveEncoder(nn.Module):
         #     # Bu format, (Batch, Heads, 49, 49) matrisiyle işlem yapmaya uygundur.
         #     mask = mask.view(batch, 1, 1, h * w)
         # # --------------------------------------------
+
+        img1 = self.maskedsizetonormal(img1)
+        img2 = self.maskedsizetonormal(img2)
 
         pos_h = torch.arange(h).to(img1.device)
         pos_w = torch.arange(w).to(img1.device)
