@@ -271,6 +271,10 @@ class DecoderTransformer(nn.Module):
         """
         :param x1, x2: encoded images, a tensor of dimension (batch_size, channel, enc_image_size, enc_image_size)
         """
+        x1 = self.maskedsizetonormal(x1)
+        x2 = self.maskedsizetonormal(x2)
+
+
         x_sam = self.cos(x1, x2)
         x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) #(batch_size, 2channel, enc_image_size, enc_image_size)
         x = self.LN(self.Conv1(x))
@@ -316,6 +320,10 @@ class DecoderTransformer(nn.Module):
         :param max_lengths: maximum length of the generated captions
         :param k: beam_size
         """
+
+        x1 = self.maskedsizetonormal(x1)
+        x2 = self.maskedsizetonormal(x2)
+
 
         x = torch.cat([x1, x2], dim = 1)
         x = self.LN(self.Conv1(x))
