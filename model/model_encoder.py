@@ -236,7 +236,7 @@ class Encoder(nn.Module):
         # maskedfeat1 = torch.cat([feat1, maskedfeat1], dim=1)
         # maskedfeat2 = torch.cat([feat2, maskedfeat2], dim=1)
 
-        return maskedfeat1, maskedfeat2, None
+        return maskedfeat1, maskedfeat2, mask
 
     def fine_tune(self, fine_tune=True):
         """
