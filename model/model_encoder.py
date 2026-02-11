@@ -352,18 +352,18 @@ class AttentiveEncoder(nn.Module):
     def forward(self, img1, img2, mask=None):
         batch, c, h, w = img1.shape
 
-        # --- KRİTİK DÜZELTME: Maske Boyutlandırma ---
-        if mask is not None:
-            # 1. Maskeyi, mevcut özellik haritası boyutuna (h, w) getir (Örn: 7x7)
-            # DINO (16x16) -> CLIP (7x7)
-            if mask.shape[-2:] != (h, w):
-                mask = F.interpolate(mask, size=(h, w), mode='nearest')
+        # # --- KRİTİK DÜZELTME: Maske Boyutlandırma ---
+        # if mask is not None:
+        #     # 1. Maskeyi, mevcut özellik haritası boyutuna (h, w) getir (Örn: 7x7)
+        #     # DINO (16x16) -> CLIP (7x7)
+        #     if mask.shape[-2:] != (h, w):
+        #         mask = F.interpolate(mask, size=(h, w), mode='nearest')
             
-            # 2. Transformer'ın anlayacağı formata (Flatten) çevir
-            # (Batch, 1, h, w) -> (Batch, 1, 1, h*w) -> (Batch, 1, 1, 49)
-            # Bu format, (Batch, Heads, 49, 49) matrisiyle işlem yapmaya uygundur.
-            mask = mask.view(batch, 1, 1, h * w)
-        # --------------------------------------------
+        #     # 2. Transformer'ın anlayacağı formata (Flatten) çevir
+        #     # (Batch, 1, h, w) -> (Batch, 1, 1, h*w) -> (Batch, 1, 1, 49)
+        #     # Bu format, (Batch, Heads, 49, 49) matrisiyle işlem yapmaya uygundur.
+        #     mask = mask.view(batch, 1, 1, h * w)
+        # # --------------------------------------------
 
         pos_h = torch.arange(h).to(img1.device)
         pos_w = torch.arange(w).to(img1.device)
@@ -381,17 +381,17 @@ class AttentiveEncoder(nn.Module):
         img_sa1, img_sa2 = img1, img2
 
         for (l, m) in self.selftrans:           
-            img_sa1 = l(img_sa1, img_sa1, img_sa1, mask) + img_sa1
-            img_sa2 = l(img_sa2, img_sa2, img_sa2, mask) + img_sa2
+            img_sa1 = l(img_sa1, img_sa1, img_sa1) + img_sa1
+            img_sa2 = l(img_sa2, img_sa2, img_sa2) + img_sa2
             # img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
             # img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
-            mask_product = mask.view(batch, 49, 1)
-            img_sa1 = img_sa1 * mask_product
-            img_sa2 = img_sa2 * mask_product
+            # mask_product = mask.view(batch, 49, 1)
+            # img_sa1 = img_sa1 * mask_product
+            # img_sa2 = img_sa2 * mask_product
 
             img = torch.cat([img_sa1, img_sa2], dim = -1)
-            # mask_double = torch.cat([mask, mask], dim = -1)
-            img = m(img, img, img, mask)
+            # mask_double = torch.cat([mask], dim = -1)
+            img = m(img, img, img)
             img_sa1 = img[:,:,:c] + img1 #+ img_ca1
             img_sa2 = img[:,:,c:] + img2 #+ img_ca2
             # img_sa1 = self.last_norm1(img_sa1)
