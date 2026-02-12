@@ -426,7 +426,7 @@ def main(args):
                 pad_mask = (sample_seqs != word_vocab['<NULL>']).float()
                 
                 # Ortalama loss
-                loss = - (advantage.unsqueeze(1) * sample_log_probs * pad_mask).sum() / batch_size
+                loss = - (advantage.unsqueeze(1) * sample_log_probs * pad_mask).sum() / args.train_batchsize
                 
                 acc = 0 # SCST'de accuracy anlamsızdır, reward takip edilir
 
