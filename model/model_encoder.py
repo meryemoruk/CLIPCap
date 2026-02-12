@@ -447,7 +447,7 @@ class Encoder(nn.Module):
             feat1 = feat1.permute(0, 3, 1, 2)
             feat2 = feat2.permute(0, 3, 1, 2)
 
-            mask_spatial = F.interpolate(mask, size=feat1.shape[2:], mode='bicubic')
+            mask_spatial = F.interpolate(mask, size=feat1.shape[2:], mode='nearest')
 
             feat1 = feat1 * mask_spatial
             feat2 = feat2 * mask_spatial
