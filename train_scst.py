@@ -230,15 +230,38 @@ def main(args):
     decoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()), lr=args.decoder_lr)
    
     if args.checkpoint is not None:
+        print(f"Checkpoint yükleniyor: {args.checkpoint}")
         checkpoint = torch.load(args.checkpoint, weights_only=False)
         start_epoch = checkpoint['epoch'] + 1
-        best_avg = checkpoint.get('avg_score', 0) # Eski checkpointlerde yoksa 0
-        decoder = checkpoint['decoder_dict']
-        decoder_optimizer = checkpoint['decoder_optimizer']
-        encoder_trans = checkpoint['encoder_trans_dict']
-        encoder_trans_optimizer = checkpoint['encoder_trans_optimizer']
-        encoder = checkpoint['encoder_dict']
-        encoder_optimizer = checkpoint['encoder_optimizer']
+        best_avg = checkpoint.get('avg_score', 0)
+        
+        # Ağırlıkları var olan modellere yükle
+        decoder.load_state_dict(checkpoint['decoder_dict'])
+        encoder_trans.load_state_dict(checkpoint['encoder_trans_dict'])
+        encoder.load_state_dict(checkpoint['encoder_dict'])
+        
+        # Optimizer state'lerini yükle (Eğer checkpoint'te varsa)
+        # Not: Optimizerlar state_dict olarak kaydedilmemiş olabilir, 
+        # train.py'da doğrudan obje olarak kaydedilmiş görünüyor ama state_dict tercih edilir.
+        # Eğer hata alırsanız optimizer yüklemeyi atlayıp sıfırdan başlatabilirsiniz.
+        if 'decoder_optimizer' in checkpoint:
+            try:
+                decoder_optimizer.load_state_dict(checkpoint['decoder_optimizer'].state_dict())
+            except AttributeError:
+                # Eğer optimizer tüm obje olarak kaydedildiyse:
+                decoder_optimizer = checkpoint['decoder_optimizer']
+
+        if 'encoder_trans_optimizer' in checkpoint:
+            try:
+                encoder_trans_optimizer.load_state_dict(checkpoint['encoder_trans_optimizer'].state_dict())
+            except AttributeError:
+                encoder_trans_optimizer = checkpoint['encoder_trans_optimizer']
+
+        if 'encoder_optimizer' in checkpoint:
+            try:
+                encoder_optimizer.load_state_dict(checkpoint['encoder_optimizer'].state_dict())
+            except AttributeError:
+                encoder_optimizer = checkpoint['encoder_optimizer']
         if args.fine_tune_encoder is True and encoder_optimizer is None:
             encoder.fine_tune(args.fine_tune_encoder)
             encoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder.parameters()), lr=args.encoder_lr)
