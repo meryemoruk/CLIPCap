@@ -52,56 +52,7 @@ class DinoMaskGenerator(nn.Module):
             
             return mask
 
-class DinoEncoder(nn.Module):
-    def __init__(self, frozen=True):
-        super().__init__()
-        # 1. DINOv2 Base Modelini Yükle (Çıktı boyutu: 768)
-        # 'dinov2_vitb14': ViT-Base, Patch Size 14
-        print("Loading DINOv2 (ViT-B/14)...")
-        self.backbone = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14')
-        
-        # 2. Modeli Dondur (Eğitilmesini istemiyorsanız)
-        if frozen:
-            self.backbone.eval()
-            for param in self.backbone.parameters():
-                param.requires_grad = False
-        
-        # 3. Normalizasyon Değerleri (ImageNet Standartları)
-        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
-
-    def preprocess(self, img):
-        # DINOv2 patch size 14 kullanır. 
-        # 16x16 çıktı almak için: 16 * 14 = 224 piksel gerekir.
-        
-        # Normalizasyon
-        img = (img - self.mean) / self.std
-        return img
-
-    def forward(self, img):
-        # Giriş: [Batch, 3, H, W]
-        if img.shape[-2:] != (224, 224):
-            img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
-
-        with torch.no_grad():
-            # forward_features çıktısı bir sözlüktür.
-            # "x_norm_patchtokens": [Batch, N_Patches, 768]
-            output = self.backbone.forward_features(img)
-            patch_tokens = output["x_norm_patchtokens"]
-            
-        # Şekil Düzenleme
-        B, N, C = patch_tokens.shape # Örn: B, 256, 768
-        
-        # Grid Boyutunu Hesapla (N=256 ise H=16)
-        H_grid = int(N**0.5) 
-        
-        # [Batch, N, 768] -> [Batch, 16, 16, 768]
-        # Bu format Transformer/MLP için uygundur.
-        feature_grid = patch_tokens.reshape(B, H_grid, H_grid, C)
-        
-        return feature_grid
-
-class DinoMLP(nn.Module):
+class ClipMLP(nn.Module):
     def __init__(self, input_dim=768, output_dim=768, expansion_factor=4, dropout=0.1):
         """
         DINOv2 özellikleri için Hizalama (Alignment) Katmanı.
@@ -150,7 +101,7 @@ class DinoMLP(nn.Module):
         # x shape: [Batch, Patches, Dim] -> [B, 256, 768]
         return self.net(x)
 
-class DinoProjector(nn.Module):
+class ClipProjector(nn.Module):
     def __init__(self, input_dim=768, output_dim=512):
         """
         DINOv2 özelliklerini CLIP kaybı (loss) hesaplamak için hazırlar.
@@ -283,10 +234,6 @@ class ClipEncoder(nn.Module):
         except AttributeError:
             pass 
 
-        # ResNet (ImageNet) İstatistikleri
-        self.register_buffer('source_mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('source_std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
-
         # CLIP (OpenAI) İstatistikleri
         self.register_buffer('target_mean', torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1))
         self.register_buffer('target_std', torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1))
@@ -331,9 +278,6 @@ class ClipEncoder(nn.Module):
 
         img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
 
-        # 1. Denormalize (ResNet -> Raw [0,1])
-        img = img * self.source_std + self.source_mean
-        
         # 2. Normalize (Raw -> CLIP)
         img = (img - self.target_mean) / self.target_std
 
@@ -375,13 +319,11 @@ class Encoder(nn.Module):
         
         if self.network=='clip':
             clip = ClipEncoder()
-        elif self.network=='dino':
-            dino = DinoEncoder()
             
         # train_dino.py'de dropout=0.1 varsayılan olarak kullanılıyor.
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self.dino_mlp = DinoMLP(dropout=args.dropout).to(device)
+        self.clip_mlp = ClipMLP(dropout=args.dropout).to(device)
 
         # 2. Checkpoint Dosyasını Yükleyin
         checkpoint_path = "./models_checkpoint/SECOND_CC_Best_Recall.pth" # Kendi dosya yolunuzu yazın
@@ -392,7 +334,7 @@ class Encoder(nn.Module):
             
             # 3. Ağırlıkları Yükleyin (Strict=True önerilir, birebir eşleşme için)
             try:
-                self.dino_mlp.load_state_dict(checkpoint['mlp_state_dict'])
+                self.clip_mlp.load_state_dict(checkpoint['mlp_state_dict'])
                 print("✅ DinoMLP başarıyla yüklendi.")
             except KeyError:
                 print("❌ HATA: Checkpoint içinde 'mlp_state_dict' bulunamadı.")
@@ -401,15 +343,13 @@ class Encoder(nn.Module):
             print(f"❌ Dosya bulunamadı: {checkpoint_path}")
 
         # 4. Modelleri Eval Moduna Alın (Test/Inference için şart)
-        self.dino_mlp.eval()
+        self.clip_mlp.eval()
 
         if('clip' in self.network):
             self.model = clip
-        elif('dino' in self.network):
-            self.model = dino
-            for param in self.dino_mlp.parameters():
+            for param in self.clip_mlp.parameters():
                 param.requires_grad = False
-            self.dino_mlp.eval()
+            self.clip_mlp.eval()
             self.dino = DinoMaskGenerator()
 
        
@@ -441,8 +381,8 @@ class Encoder(nn.Module):
             feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
             feat2 = self.model(imageB)
 
-            feat1 = self.dino_mlp(feat1)  # (batch_size, 2048, image_size/32, image_size/32)
-            feat2 = self.dino_mlp(feat2)
+            feat1 = self.clip_mlp(feat1)  # (batch_size, 2048, image_size/32, image_size/32)
+            feat2 = self.clip_mlp(feat2)
 
             feat1 = feat1.permute(0, 3, 1, 2)
             feat2 = feat2.permute(0, 3, 1, 2)
