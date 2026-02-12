@@ -277,7 +277,7 @@ class RSCLIPTextEncoder(nn.Module):
         return text_features
 
 class ClipEncoder(nn.Module):
-    def __init__(self, path = "/content/CLIPCap/RemoteCLIP-ViT-B-32.pt"):
+    def __init__(self, path="/content/CLIPCap/RemoteCLIP-ViT-B-32.pt"):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         try:
@@ -290,75 +290,85 @@ class ClipEncoder(nn.Module):
         self.register_buffer('target_std', torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1))
 
         jit_path = path
-        print(jit_path)
+        print(f"Loading CLIP from: {jit_path}")
 
-        if (True):
-            # HATA ÇÖZÜMÜ: torch.jit.load YERİNE torch.load kullanıyoruz
+        if True:
             checkpoint = torch.load(jit_path, map_location=self.device)
-            
-            # Checkpoint yapısını kontrol et (Bazen direkt dict, bazen 'state_dict' key'i içinde olur)
             if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
                 state_dict = checkpoint['state_dict']
             else:
                 state_dict = checkpoint
 
-            # Temizlik: Eğer anahtarlarda 'module.' varsa (DataParallel artığı) temizle
             clean_state_dict = {}
             for k, v in state_dict.items():
                 new_k = k.replace("module.", "")
                 clean_state_dict[new_k] = v
             
-            # Ağırlıkları Yükle (strict=False, versiyon farkı varsa patlamaması için)
-            # DOĞRU: Sadece fonksiyonu çağır, atama yapma
             self.model.load_state_dict(clean_state_dict, strict=False)
-
         else:
-            print("UYARI: JIT dosyası bulunamadı, orijinal ağırlıklar kullanılıyor.")
+            print("UYARI: Checkpoint yüklenemedi.")
 
-        # --- 3. DERİN HOOK MEKANİZMASI (ÇÖZÜM BURADA) ---
+        # --- Hook Mekanizması ---
         self.features = {}
 
         def get_activation_deep(name):
             def hook(model, input, output):
+                # Output sequence: [Seq_Len, Batch, Dim]
                 self.features[name] = output.detach().clone()
             return hook
 
+        # ViT-B/32'de feature boyutu 768'dir.
         self.model.visual.transformer.resblocks[-1].register_forward_hook(get_activation_deep('last_block'))
 
     def forward(self, img):
-
+        # 1. Resize
         img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
 
-        # 2. Normalize (Raw -> CLIP)
+        # 2. Normalize
         img = (img - self.target_mean) / self.target_std
 
-        self.feature = {}
-
+        # 3. Forward Pass
+        self.features = {} # Hook için temizle
         with torch.no_grad():
             _ = self.model.encode_image(img)
             
-        # --- 5. Veriyi İşleme (Manuel Normalizasyon) ---
-        # Transformer çıktısı: [Seq_Len, Batch, Dim] -> Genelde [50, 1, 768]
+        # 4. Feature İşleme
+        # Transformer çıktısı: [Seq_Len (50), Batch, Dim (768)]
         raw_output = self.features['last_block']
         
-        # Şekil Düzenleme: [Seq, Batch, Dim] -> [Batch, Seq, Dim]
+        # [Batch, Seq_Len, Dim] formatına çevir
+        raw_output = raw_output.permute(1, 0, 2) 
         
-        raw_output = raw_output.permute(1, 0, 2) # [1, 50, 768]
-        
-        # KRİTİK ADIM: Hook'u ln_post öncesine attığımız için,
-        # LayerNorm işlemini şimdi elle yapmalıyız. Yoksa veriler normalize olmaz.
+        # LayerNorm (Hook son bloktan alındığı için post-ln gereklidir)
         final_features = self.model.visual.ln_post(raw_output)
 
+        # CLS token'ı at: [Batch, 49, 768]
         patch_tokens = final_features[:, 1:, :] 
             
-        batch_size = patch_tokens.shape[0]     # 1
-        num_patches = patch_tokens.shape[1]    # 49 olmalı
+        batch_size = patch_tokens.shape[0]
         embed_dim = patch_tokens.shape[2]      # 768
         
-        grid_size = int(num_patches ** 0.5)    # 7
+        # Grid Size: sqrt(49) = 7
+        grid_size = int(patch_tokens.shape[1] ** 0.5) 
+        
+        # Şekli mekansal hale getir: [Batch, 7, 7, 768]
+        spatial_features = patch_tokens.reshape(batch_size, grid_size, grid_size, embed_dim)
 
-        return patch_tokens.reshape(batch_size, grid_size, grid_size, embed_dim).permute(0, 3, 1, 2)
+        # --- DINO UYUMLULUĞU İÇİN DÖNÜŞÜM ---
+        
+        # 1. Interpolation için Channel boyutunu öne al: [Batch, 768, 7, 7]
+        spatial_features = spatial_features.permute(0, 3, 1, 2)
+        
+        # 2. DINO boyutuna (16x16) Upsample et
+        # DINO ViT-B/14 kullandığı için 224/14 = 16x16 grid üretir.
+        # CLIP ViT-B/32 ise 224/32 = 7x7 grid üretir.
+        spatial_features = F.interpolate(spatial_features, size=(16, 16), mode='bilinear', align_corners=False)
+        
+        # 3. DINO formatına (Channel Last) geri çevir: [Batch, 16, 16, 768]
+        output = spatial_features.permute(0, 2, 3, 1)
 
+        return output
+    
 class Encoder(nn.Module):
     """
     Encoder.
