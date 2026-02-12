@@ -305,15 +305,13 @@ class DecoderTransformer(nn.Module):
 
     def sample_beam(self, x1, x2, k=1):
         """
-        Düzeltilmiş Beam Search Implementasyonu
+        Düzeltilmiş Beam Search - Boyut Hatası Giderildi
         """
-        # Featureları birleştir ve şekillendir
         x = torch.cat([x1, x2], dim=1)
         x = self.LN(self.Conv1(x))
         batch, channel, h, w = x.shape
         
-        # Batch size > 1 ise bu kod sadece k=1 için doğru çalışır. 
-        # Test modunda batch=1 olduğu varsayılmıştır.
+        # Batch size 1 varsayımıyla (Test modu)
         x = x.view(batch, channel, -1).unsqueeze(0).expand(k, -1, -1, -1).reshape(batch*k, channel, h*w).permute(2, 0, 1)
 
         tgt = torch.zeros(k*batch, self.max_lengths).to(torch.int64).cuda()
@@ -340,25 +338,26 @@ class DecoderTransformer(nn.Module):
             scores = scores[:, step, :].squeeze(1)
             scores = F.log_softmax(scores, dim=1)
 
-            # --- DÜZELTME 1: İLK ADIMDA ÇEŞİTLİLİK (Step 0 Diversity) ---
             if step == 0:
-                # İlk adımda tüm beam'ler aynıdır (START token).
-                # Bu yüzden sadece 1 tanesinin skorlarına bakıp en iyi k FARKLI kelimeyi seçiyoruz.
-                # Aksi takdirde tüm beam'ler aynı kelimeyi seçip kopyalanır.
-                scores = scores[0]  # Sadece ilk beam'in skorunu al
-                top_k_scores, top_k_words = scores.topk(k, 0, True, True) # (k,)
+                # İlk adımda çeşitlilik sağlamak için sadece ilk beam'i kullan
+                scores = scores[0] 
+                top_k_scores, top_k_words = scores.topk(k, 0, True, True) 
                 
-                # Tüm beamler 0. indexten (ilk kopyadan) türeyecek
-                prev_word_inds = torch.zeros(k, dtype=torch.long).cuda()
-                next_word_inds = top_k_words # (k,)
-                
-                # Skorları boyutuna uygun hale getir (k, 1)
+                # Boyutu (k, 1) yap - KRİTİK ADIM
                 top_k_scores = top_k_scores.unsqueeze(1)
                 
+                prev_word_inds = torch.zeros(k, dtype=torch.long).cuda()
+                next_word_inds = top_k_words
+                
             else:
-                # Normal Beam Search adımları
+                # Önceki skorları ekle
                 scores = top_k_scores.expand_as(scores) + scores
+                
+                # Tüm olasılıklar arasından en iyi k taneyi seç
                 top_k_scores, top_k_words = scores.view(-1).topk(k, 0, True, True)
+                
+                # Boyutu tekrar (k, 1) yap - HATAYI ÇÖZEN KISIM BURASI
+                top_k_scores = top_k_scores.unsqueeze(1)
                 
                 prev_word_inds = torch.div(top_k_words, self.vocab_size, rounding_mode='floor')
                 next_word_inds = top_k_words % self.vocab_size
@@ -372,8 +371,9 @@ class DecoderTransformer(nn.Module):
             complete_inds = list(set(range(len(next_word_inds))) - set(incomplete_inds))
             
             if len(complete_inds) > 0:
+                # Scorelar (k, 1) boyutunda olduğu için listeye çevirirken squeeze yapıyoruz
                 complete_seqs.extend(seqs[complete_inds].tolist())
-                complete_seqs_scores.extend(top_k_scores[complete_inds])
+                complete_seqs_scores.extend(top_k_scores[complete_inds].squeeze(1).tolist())
             
             k -= len(complete_inds)
             if k == 0:
@@ -382,29 +382,26 @@ class DecoderTransformer(nn.Module):
             # Beamleri güncelle
             seqs = seqs[incomplete_inds]
             x = x[:, prev_word_inds[incomplete_inds]]
-            top_k_scores = top_k_scores[incomplete_inds] # Zaten (k, 1) boyutunda
-            tgt = tgt[incomplete_inds]
             
+            # top_k_scores zaten (k, 1) boyutunda, sadece filtreliyoruz
+            top_k_scores = top_k_scores[incomplete_inds]
+            
+            tgt = tgt[incomplete_inds]
             if step < self.max_lengths - 1:
                 tgt[:, :step+2] = seqs
 
-        # Hiçbir cümle <END> ile bitmediyse kalanları ekle
         if len(complete_seqs) == 0:
             complete_seqs.extend(seqs.tolist())
-            complete_seqs_scores.extend(top_k_scores)
+            complete_seqs_scores.extend(top_k_scores.squeeze(1).tolist())
 
-        # --- DÜZELTME 2: UZUNLUK NORMALİZASYONU (Length Penalty) ---
-        # Skor = Log_Prob / (Uzunluk ^ alpha)
-        # alpha = 0.7 genelde iyi bir değerdir. 1.0 yaparsanız uzun cümleleri daha çok teşvik eder.
+        # Uzunluk Normalizasyonu (Length Penalty)
         alpha = 0.7
         normalized_scores = []
         for s, seq in zip(complete_seqs_scores, complete_seqs):
-             # Tensör ise float'a çevir, değilse direkt kullan
-            score_val = s.item() if isinstance(s, torch.Tensor) else s
-            length_penalty = (len(seq) ** alpha)
-            normalized_scores.append(score_val / length_penalty)
+            normalized_scores.append(s / (len(seq) ** alpha))
 
         best_idx = normalized_scores.index(max(normalized_scores))
         seq = complete_seqs[best_idx]
         
         return seq
+    
