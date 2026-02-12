@@ -234,7 +234,7 @@ def main(args):
         best_avg = checkpoint.get('avg_score', 0) # Eski checkpointlerde yoksa 0
         decoder = checkpoint['decoder_dict']
         decoder_optimizer = checkpoint['decoder_optimizer']
-        encoder_trans = checkpoint['encoder_trans']
+        encoder_trans = checkpoint['encoder_trans_dict']
         encoder_trans_optimizer = checkpoint['encoder_trans_optimizer']
         encoder = checkpoint['encoder_dict']
         encoder_optimizer = checkpoint['encoder_optimizer']
