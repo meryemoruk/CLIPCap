@@ -303,70 +303,108 @@ class DecoderTransformer(nn.Module):
         return seqs
 
 
-    def sample_beam(self, x, k=1):
+    def sample_beam(self, x1, x2, k=1):
         """
-        :param x: encoded images, a tensor of dimension (batch_size, channel, enc_image_size*enc_image_size)
-        :param max_lengths: maximum length of the generated captions
-        :param k: beam_size
+        Düzeltilmiş Beam Search Implementasyonu
         """
-        batch, channel, L = x.shape
-        assert batch == 1, "batch size must be 1"
-        x = x.view(batch, channel, -1).unsqueeze(0).expand(k, -1, -1, -1).reshape(batch*k, channel, L).permute(2, 0, 1) #(h*w, batch, embed_dim)
+        # Featureları birleştir ve şekillendir
+        x = torch.cat([x1, x2], dim=1)
+        x = self.LN(self.Conv1(x))
+        batch, channel, h, w = x.shape
+        
+        # Batch size > 1 ise bu kod sadece k=1 için doğru çalışır. 
+        # Test modunda batch=1 olduğu varsayılmıştır.
+        x = x.view(batch, channel, -1).unsqueeze(0).expand(k, -1, -1, -1).reshape(batch*k, channel, h*w).permute(2, 0, 1)
 
-        tgt = torch.zeros(k*batch, self.max_lengths).to(torch.int64).cuda() #(batch_size*k, self.max_lengths)
+        tgt = torch.zeros(k*batch, self.max_lengths).to(torch.int64).cuda()
 
         mask = (torch.triu(torch.ones(self.max_lengths, self.max_lengths)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         mask = mask.cuda()
-        tgt[:, 0] = torch.LongTensor([self.word_vocab['<START>']] *batch*k).cuda() #(batch_size*k, 1)
-        seqs = torch.LongTensor([[self.word_vocab['<START>']]] *batch*k).cuda()
+        
+        tgt[:, 0] = torch.LongTensor([self.word_vocab['<START>']] * batch * k).cuda()
+        seqs = torch.LongTensor([[self.word_vocab['<START>']]] * batch * k).cuda()
+        
         top_k_scores = torch.zeros(k*batch, 1).cuda()
         complete_seqs = []
         complete_seqs_scores = []
+        
         for step in range(self.max_lengths):
             word_emb = self.vocab_embedding(tgt)
             word_emb = word_emb.transpose(1, 0)
             word_emb = self.position_encoding(word_emb)
             
             pred = self.transformer(word_emb, x, tgt_mask=mask)
-
-            pred = self.wdc(self.dropout(pred))  # (length, batch, vocab_size)
-            scores = pred.permute(1, 0, 2) # (batch, length, vocab_size)
-            scores = scores[:, step, :].squeeze(1)  # [batch, 1, vocab_size] -> [batch, vocab_size]
+            pred = self.wdc(self.dropout(pred))
+            scores = pred.permute(1, 0, 2)
+            scores = scores[:, step, :].squeeze(1)
             scores = F.log_softmax(scores, dim=1)
-            scores = top_k_scores.expand_as(scores) + scores
-            if step == 0:
-                top_k_scores, top_k_words = scores[0].topk(k, 0, True, True)
-            else:
-                top_k_scores, top_k_words = scores.view(-1).topk(k, 0, True, True)  # (s)
 
-            # Convert unrolled indices to actual indices of scores
-            # prev_word_inds = top_k_words // vocab_size  # (s)
-            prev_word_inds = torch.div(top_k_words, self.vocab_size, rounding_mode='floor')
-            next_word_inds = top_k_words % self.vocab_size  # (s)
-            # Add new words to sequences
-            seqs = torch.cat([seqs[prev_word_inds], next_word_inds.unsqueeze(1)], dim = 1)
-            # Which sequences are incomplete (didn't reach <end>)?
+            # --- DÜZELTME 1: İLK ADIMDA ÇEŞİTLİLİK (Step 0 Diversity) ---
+            if step == 0:
+                # İlk adımda tüm beam'ler aynıdır (START token).
+                # Bu yüzden sadece 1 tanesinin skorlarına bakıp en iyi k FARKLI kelimeyi seçiyoruz.
+                # Aksi takdirde tüm beam'ler aynı kelimeyi seçip kopyalanır.
+                scores = scores[0]  # Sadece ilk beam'in skorunu al
+                top_k_scores, top_k_words = scores.topk(k, 0, True, True) # (k,)
+                
+                # Tüm beamler 0. indexten (ilk kopyadan) türeyecek
+                prev_word_inds = torch.zeros(k, dtype=torch.long).cuda()
+                next_word_inds = top_k_words # (k,)
+                
+                # Skorları boyutuna uygun hale getir (k, 1)
+                top_k_scores = top_k_scores.unsqueeze(1)
+                
+            else:
+                # Normal Beam Search adımları
+                scores = top_k_scores.expand_as(scores) + scores
+                top_k_scores, top_k_words = scores.view(-1).topk(k, 0, True, True)
+                
+                prev_word_inds = torch.div(top_k_words, self.vocab_size, rounding_mode='floor')
+                next_word_inds = top_k_words % self.vocab_size
+
+            # Sequence güncelleme
+            seqs = torch.cat([seqs[prev_word_inds], next_word_inds.unsqueeze(1)], dim=1)
+            
+            # Biten cümleleri ayıklama
             incomplete_inds = [ind for ind, next_word in enumerate(next_word_inds) if
                                next_word != self.word_vocab['<END>']]
             complete_inds = list(set(range(len(next_word_inds))) - set(incomplete_inds))
+            
             if len(complete_inds) > 0:
                 complete_seqs.extend(seqs[complete_inds].tolist())
                 complete_seqs_scores.extend(top_k_scores[complete_inds])
-            k -= len(complete_inds)  # reduce beam length accordingly
+            
+            k -= len(complete_inds)
             if k == 0:
                 break
+            
+            # Beamleri güncelle
             seqs = seqs[incomplete_inds]
-            x = x[:,prev_word_inds[incomplete_inds]]
-            top_k_scores = top_k_scores[incomplete_inds].unsqueeze(1)
+            x = x[:, prev_word_inds[incomplete_inds]]
+            top_k_scores = top_k_scores[incomplete_inds] # Zaten (k, 1) boyutunda
             tgt = tgt[incomplete_inds]
-            if step<self.max_lengths-1:
+            
+            if step < self.max_lengths - 1:
                 tgt[:, :step+2] = seqs
 
+        # Hiçbir cümle <END> ile bitmediyse kalanları ekle
+        if len(complete_seqs) == 0:
+            complete_seqs.extend(seqs.tolist())
+            complete_seqs_scores.extend(top_k_scores)
 
-        if complete_seqs == []:
-            complete_seqs.extend(seqs[incomplete_inds].tolist())
-            complete_seqs_scores.extend(top_k_scores[incomplete_inds])
-        i = complete_seqs_scores.index(max(complete_seqs_scores))
-        seq = complete_seqs[i]
+        # --- DÜZELTME 2: UZUNLUK NORMALİZASYONU (Length Penalty) ---
+        # Skor = Log_Prob / (Uzunluk ^ alpha)
+        # alpha = 0.7 genelde iyi bir değerdir. 1.0 yaparsanız uzun cümleleri daha çok teşvik eder.
+        alpha = 0.7
+        normalized_scores = []
+        for s, seq in zip(complete_seqs_scores, complete_seqs):
+             # Tensör ise float'a çevir, değilse direkt kullan
+            score_val = s.item() if isinstance(s, torch.Tensor) else s
+            length_penalty = (len(seq) ** alpha)
+            normalized_scores.append(score_val / length_penalty)
+
+        best_idx = normalized_scores.index(max(normalized_scores))
+        seq = complete_seqs[best_idx]
+        
         return seq
