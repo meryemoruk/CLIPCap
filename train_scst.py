@@ -229,7 +229,7 @@ def main(args):
                                     n_layers= args.decoder_n_layers, dropout=args.dropout)
         decoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()), lr=args.decoder_lr)
     else:
-        checkpoint = torch.load(args.checkpoint)
+        checkpoint = torch.load(args.checkpoint, weights_only=False)
         start_epoch = checkpoint['epoch'] + 1
         best_avg = checkpoint.get('avg_score', 0) # Eski checkpointlerde yoksa 0
         decoder = checkpoint['decoder']
