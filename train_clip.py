@@ -81,7 +81,7 @@ def main(args):
 
     # Initialize / load checkpoint
     if args.checkpoint is None:      
-        encoder = Encoder() 
+        encoder = Encoder('clip', args) 
         clip_mlp = ClipMLP(dropout=args.dropout)  
         clip_projector = ClipProjector()
         text_encoder = RSCLIPTextEncoder()
