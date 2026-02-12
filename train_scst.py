@@ -232,11 +232,11 @@ def main(args):
         checkpoint = torch.load(args.checkpoint, weights_only=False)
         start_epoch = checkpoint['epoch'] + 1
         best_avg = checkpoint.get('avg_score', 0) # Eski checkpointlerde yoksa 0
-        decoder = checkpoint['decoder']
+        decoder = checkpoint['decoder_dict']
         decoder_optimizer = checkpoint['decoder_optimizer']
         encoder_trans = checkpoint['encoder_trans']
         encoder_trans_optimizer = checkpoint['encoder_trans_optimizer']
-        encoder = checkpoint['encoder']
+        encoder = checkpoint['encoder_dict']
         encoder_optimizer = checkpoint['encoder_optimizer']
         if args.fine_tune_encoder is True and encoder_optimizer is None:
             encoder.fine_tune(args.fine_tune_encoder)
