@@ -109,7 +109,7 @@ def main(args):
             if encoder is not None:
                 feat1, feat2, mask = encoder(imgA, imgB)
             feat1, feat2 = encoder_trans(feat1, feat2, mask)
-            seq = decoder.sample(feat1, feat2, args.beam_size)
+            seq = decoder.sample1(feat1, feat2, args.beam_size)
 
             img_token = token_all.tolist()
             img_tokens = list(map(lambda c: [w for w in c if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}],
