@@ -153,8 +153,10 @@ def main(args):
                 imgB = l_resizeB(imgB)
             
             # Forward prop.
-            img_feat_A = encoder(imgA)
-            img_feat_B = encoder(imgB)
+            img_feat_A = encoder(imgA).float() # Add .float() here
+            img_feat_B = encoder(imgB).float() # Add .float() here
+
+            
 
             img_feat_A = clip_mlp(img_feat_A)
             img_feat_B = clip_mlp(img_feat_B)
