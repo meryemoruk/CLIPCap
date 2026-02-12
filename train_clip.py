@@ -223,10 +223,14 @@ def main(args):
                 
                 imgA = imgA.cuda()
                 imgB = imgB.cuda()
+
+                img_feat_A = encoder(imgA).float() # Add .float() here
+                img_feat_B = encoder(imgB).float() # Add .float() here
+
                 
                 # 1. Encoder'dan geçir
-                feat_A = clip_mlp(encoder(imgA)) # [B, 16, 16, 768]
-                feat_B = clip_mlp(encoder(imgB)) # [B, 16, 16, 768]
+                feat_A = clip_mlp(img_feat_A) # [B, 16, 16, 768]
+                feat_B = clip_mlp(img_feat_B) # [B, 16, 16, 768]
                 
                 # 2. Sequence formatına çevir [B, 256, 768]
                 b, h, w, c = feat_A.shape
