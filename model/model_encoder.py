@@ -220,23 +220,31 @@ class Encoder(nn.Module):
         imageB = F.interpolate(imageB, size=(224, 224), mode='bicubic', align_corners=False)
 
         mask =  None
-        mask = self.dino((imageA), (imageB))
-        
-        mask = F.interpolate(mask, size=(224, 224), mode='bicubic')
+        with torch.no_grad():
+            mask = self.dino(imageA, imageB)
 
-        maskedA = imageA * mask
-        maskedB = imageB * mask
+        mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='nearest')
+        
+        # mask = F.interpolate(mask, size=(224, 224), mode='bicubic')
+
+        # mask_feat = self.encoder(mask)
+
+        # maskedA = imageA * mask
+        # maskedB = imageB * mask
 
         # feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
         # feat2 = self.model(imageB)
 
-        maskedfeat1 = self.model(maskedA)  # (batch_size, 2048, image_size/32, image_size/32)
-        maskedfeat2 = self.model(maskedB)
+        featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
+        featB = self.model(imageB)
+
+        featA = featA * mask_spatial
+        featB = featB * mask_spatial
 
         # maskedfeat1 = torch.cat([feat1, maskedfeat1], dim=1)
         # maskedfeat2 = torch.cat([feat2, maskedfeat2], dim=1)
 
-        return maskedfeat1, maskedfeat2, mask
+        return featA, featB, mask
 
     def fine_tune(self, fine_tune=True):
         """
