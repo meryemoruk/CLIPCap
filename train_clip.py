@@ -12,7 +12,7 @@ import json
 from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
 from data.SECOND_CC.SECONDCC import SECONDCCDataset
 from data.Dubai_CC.DubaiCC import DubaiCCDataset
-from model.model_encoder import Encoder, AttentiveEncoder, DinoEncoder, DinoMLP, DinoProjector, RSCLIPTextEncoder, ClipLoss
+from model.model_encoder import Encoder, AttentiveEncoder, ClipMLP, ClipProjector, RSCLIPTextEncoder, ClipLoss
 from model.model_decoder import DecoderTransformer
 from model.model_encoder import DifferenceAttention
 from utils import *
@@ -81,27 +81,27 @@ def main(args):
 
     # Initialize / load checkpoint
     if args.checkpoint is None:      
-        encoder = DinoEncoder() 
-        dino_mlp = DinoMLP(dropout=args.dropout)  
-        dino_projection = DinoProjector()
+        encoder = Encoder() 
+        clip_mlp = ClipMLP(dropout=args.dropout)  
+        clip_projector = ClipProjector()
         text_encoder = RSCLIPTextEncoder()
     
     # Move to GPU
     encoder = encoder.cuda()
-    dino_mlp = dino_mlp.cuda()
-    dino_projection = dino_projection.cuda()
+    clip_mlp = clip_mlp.cuda()
+    clip_projector = clip_projector.cuda()
     text_encoder = text_encoder.cuda()
     
     criterion = ClipLoss().cuda()
     diff_attn = DifferenceAttention(dim=768, heads=8).cuda()
-    optimizer = torch.optim.AdamW(list(dino_mlp.parameters()) + list(dino_projection.parameters()) +list(diff_attn.parameters()) + [criterion.logit_scale], lr=args.lr)
+    optimizer = torch.optim.AdamW(list(clip_mlp.parameters()) + list(clip_projector.parameters()) +list(diff_attn.parameters()) + [criterion.logit_scale], lr=args.lr)
 
     # PARAMETRE İSTATİSTİKLERİ
     print("-" * 50)
     total_trainable = 0
     total_trainable += count_parameters(encoder, "Encoder (Backbone)")
-    total_trainable += count_parameters(dino_mlp, "MLP")
-    total_trainable += count_parameters(dino_projection, "Projection")
+    total_trainable += count_parameters(clip_mlp, "MLP")
+    total_trainable += count_parameters(clip_projector, "Projection")
     total_trainable += count_parameters(text_encoder, "Text Encoder")
     print("-" * 50)
     print(f"TOPLAM EĞİTİLEBİLİR PARAMETRE: {total_trainable:,}")
@@ -132,8 +132,8 @@ def main(args):
     # Epochs
     for epoch in range(start_epoch, args.num_epochs):        
         encoder.eval()
-        dino_mlp.train()
-        dino_projection.train()
+        clip_mlp.train()
+        clip_projector.train()
         text_encoder.eval()
 
         batch_time = AverageMeter()
@@ -156,8 +156,8 @@ def main(args):
             img_feat_A = encoder(imgA)
             img_feat_B = encoder(imgB)
 
-            img_feat_A = dino_mlp(img_feat_A)
-            img_feat_B = dino_mlp(img_feat_B)
+            img_feat_A = clip_mlp(img_feat_A)
+            img_feat_B = clip_mlp(img_feat_B)
 
             b, h, w, c = img_feat_A.shape
             seq_A = img_feat_A.reshape(b, h*w, c) # [B, 256, 768]
@@ -166,7 +166,7 @@ def main(args):
             diff_seq = diff_attn(seq_A, seq_B)
             diff_vec = diff_seq.mean(dim=1)
 
-            diff_feat = dino_projection(diff_vec)
+            diff_feat = clip_projector(diff_vec)
             diff_feat = diff_feat / diff_feat.norm(dim=-1, keepdim=True)    
 
             # # Pooling (Eğer projection içinde yoksa burada yapılmalı)
@@ -174,8 +174,8 @@ def main(args):
             # vec_A = img_feat_A.mean(dim=(1, 2))
             # vec_B = img_feat_B.mean(dim=(1, 2))
 
-            # proj_A = dino_projection(vec_A)
-            # proj_B = dino_projection(vec_B)
+            # proj_A = clip_projector(vec_A)
+            # proj_B = clip_projector(vec_B)
 
             # diff_feat = proj_B - proj_A
             # diff_feat = diff_feat / diff_feat.norm(dim=-1, keepdim=True)
@@ -209,8 +209,8 @@ def main(args):
         # --- VALIDATION LOOP ---
         print(f"\nEpoch {epoch} Validation Başlıyor...")
         encoder.eval()
-        dino_mlp.eval()
-        dino_projection.eval()
+        clip_mlp.eval()
+        clip_projector.eval()
         text_encoder.eval()
         
         all_image_feats = []
@@ -223,8 +223,8 @@ def main(args):
                 imgB = imgB.cuda()
                 
                 # 1. Encoder'dan geçir
-                feat_A = dino_mlp(encoder(imgA)) # [B, 16, 16, 768]
-                feat_B = dino_mlp(encoder(imgB)) # [B, 16, 16, 768]
+                feat_A = clip_mlp(encoder(imgA)) # [B, 16, 16, 768]
+                feat_B = clip_mlp(encoder(imgB)) # [B, 16, 16, 768]
                 
                 # 2. Sequence formatına çevir [B, 256, 768]
                 b, h, w, c = feat_A.shape
@@ -236,7 +236,7 @@ def main(args):
                 
                 # 4. Ortalama al ve Project et
                 diff_vec = diff_seq.mean(dim=1) # [B, 768]
-                diff_feat = dino_projection(diff_vec)
+                diff_feat = clip_projector(diff_vec)
                 
                 # 5. Normalize et
                 diff_feat = diff_feat / diff_feat.norm(dim=-1, keepdim=True)
@@ -272,8 +272,8 @@ def main(args):
                 
                 state = {
                     'epoch': epoch,
-                    'mlp_state_dict': dino_mlp.state_dict(),
-                    'projection_state_dict': dino_projection.state_dict(),
+                    'mlp_state_dict': clip_mlp.state_dict(),
+                    'projection_state_dict': clip_projector.state_dict(),
                     'best_score': best_score,
                     'optimizer': optimizer.state_dict()
                 }
