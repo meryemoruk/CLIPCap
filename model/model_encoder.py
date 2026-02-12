@@ -236,7 +236,7 @@ class Encoder(nn.Module):
             featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
             featB = self.model(imageB)
 
-            mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='nearest')
+            mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
 
             featA = featA * mask_spatial
             featB = featB * mask_spatial
