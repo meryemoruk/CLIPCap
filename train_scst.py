@@ -99,6 +99,51 @@ def sample_scst_wrapper(self, x1, x2, sample_max_len=40):
     
     return seqs, log_probs
 
+def sample_greedy_wrapper(self, x1, x2, sample_max_len=40):
+    """
+    SCST Baseline için Batch Uyumlu Greedy Sampling.
+    Orijinal decoder.sample fonksiyonu batch > 1 iken hata verdiği için bu kullanılır.
+    """
+    # 1. Feature Hazırlığı
+    x_sam = self.cos(x1, x2)
+    x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) 
+    x = self.LN(self.Conv1(x))
+
+    batch, channel = x.size(0), x.size(1)
+    x = x.view(batch, channel, -1).permute(2, 0, 1)
+
+    # 2. Hazırlık
+    device = x.device
+    tgt = torch.zeros(batch, sample_max_len).to(torch.int64).to(device)
+    tgt[:, 0] = self.word_vocab['<START>']
+    
+    seqs = []
+    
+    # Maske
+    mask = torch.triu(torch.ones(sample_max_len, sample_max_len) * float('-inf'), diagonal=1).to(device)
+    
+    for step in range(sample_max_len - 1):
+        curr_tgt = tgt[:, :step+1]
+        tgt_pad_mask = (curr_tgt == self.word_vocab['<NULL>'])
+        
+        word_emb = self.vocab_embedding(curr_tgt).transpose(1, 0)
+        word_emb = self.position_encoding(word_emb)
+        
+        curr_mask = mask[:step+1, :step+1]
+        pred = self.transformer(word_emb, x, tgt_mask=curr_mask, tgt_key_padding_mask=tgt_pad_mask)
+        
+        last_output = pred[-1, :, :]
+        logits = self.wdc(last_output)
+        
+        # --- GREEDY SEÇİM (ARGMAX) ---
+        token = logits.argmax(dim=-1) # En yüksek olasılıklı kelimeyi seç
+        
+        seqs.append(token)
+        tgt[:, step+1] = token
+
+    seqs = torch.stack(seqs, dim=1) # (Batch, Len)
+    return seqs
+
 def get_self_critical_reward(model, sample_seqs, greedy_seqs, gt_tokens, word_vocab):
     """
     SCST için Reward Hesaplama (CIDEr kullanır).
@@ -269,6 +314,7 @@ def main(args):
     # --- MONKEY PATCHING ---
     # Decoder'a sample_scst_wrapper metodunu ekliyoruz
     decoder.sample_scst = types.MethodType(sample_scst_wrapper, decoder)
+    decoder.sample_greedy = types.MethodType(sample_greedy_wrapper, decoder) #
     # -----------------------
 
     # Move to GPU
@@ -357,11 +403,8 @@ def main(args):
                 
                 # 1. Greedy Search (Baseline) - Gradientsiz
                 with torch.no_grad():
-                    # decoder.sample fonksiyonu greedy (k=1) döndürür
-                    greedy_seqs = decoder.sample(feat1, feat2, k=1) 
-                    if isinstance(greedy_seqs, list): # sample fonksiyonu list dönerse tensor yap
-                        greedy_seqs = torch.LongTensor(greedy_seqs).cuda()
-                        if greedy_seqs.dim() == 1: greedy_seqs = greedy_seqs.unsqueeze(0)
+                    # Yeni yazdığımız batch uyumlu fonksiyonu kullanıyoruz
+                    greedy_seqs = decoder.sample_greedy(feat1, feat2, sample_max_len=args.max_length)
 
                 # 2. Monte-Carlo Sampling (Policy) - Gradientli
                 # Yeni eklenen sample_scst fonksiyonunu kullanıyoruz
