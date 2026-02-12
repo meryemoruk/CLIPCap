@@ -22,13 +22,12 @@ def count_parameters(model, model_name):
     print(f"{model_name}: {total_params:,} toplam parametre | {trainable_params:,} eğitilebilir parametre")
     return trainable_params
 
-# --- SCST İÇİN GEREKLİ YENİ FONKSİYONLAR ---
 def sample_scst_wrapper(self, x1, x2, sample_max_len=40):
     """
-    DecoderTransformer için SCST Sampling Metodu (Monkey-Patch).
-    Greedy yerine Multinomial sampling yapar ve log_prob'ları döndürür.
+    SCST Sampling Metodu (Düzeltilmiş - In-place hatası giderildi).
+    Her adımda 'tgt' tensörünü cat ile birleştirerek autograd zincirini korur.
     """
-    # 1. Feature Hazırlığı (Forward metodundan alındı)
+    # 1. Feature Hazırlığı
     x_sam = self.cos(x1, x2)
     x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) 
     x = self.LN(self.Conv1(x))
@@ -38,23 +37,18 @@ def sample_scst_wrapper(self, x1, x2, sample_max_len=40):
 
     # 2. Hazırlık
     device = x.device
-    tgt = torch.zeros(batch, sample_max_len).to(torch.int64).to(device)
-    tgt[:, 0] = self.word_vocab['<START>']
+    
+    # DÜZELTME: tgt'yi zeros ile başlatıp doldurmak yerine, sadece START token ile başlatıyoruz.
+    curr_tgt = torch.full((batch, 1), self.word_vocab['<START>'], dtype=torch.long).to(device)
     
     seqs = []
     log_probs = []
-    
-    # Mevcut token (Batch,)
-    curr_token = tgt[:, 0] 
     
     # Maske (Triangular)
     mask = torch.triu(torch.ones(sample_max_len, sample_max_len) * float('-inf'), diagonal=1).to(device)
     
     # Loop
     for step in range(sample_max_len - 1):
-        # Mevcut target (Batch, Step+1)
-        curr_tgt = tgt[:, :step+1]
-        
         # Padding mask
         tgt_pad_mask = (curr_tgt == self.word_vocab['<NULL>'])
         
@@ -64,7 +58,6 @@ def sample_scst_wrapper(self, x1, x2, sample_max_len=40):
         word_emb = self.position_encoding(word_emb)
         
         # Transformer Forward
-        # Maskeyi o anki uzunluğa göre kes
         curr_mask = mask[:step+1, :step+1]
         
         pred = self.transformer(word_emb, x, tgt_mask=curr_mask, tgt_key_padding_mask=tgt_pad_mask)
@@ -78,20 +71,21 @@ def sample_scst_wrapper(self, x1, x2, sample_max_len=40):
         
         # --- MULTINOMIAL SAMPLING ---
         probs = F.softmax(logits, dim=-1)
-        token = probs.multinomial(1).squeeze(1) # (Batch,)
+        token = probs.multinomial(1) # (Batch, 1) -> Boyut korunsun diye squeeze yapmıyoruz hemen
         
         # Log Prob'u kaydet (Gradient için gerekli)
         log_prob = F.log_softmax(logits, dim=-1)
-        token_log_prob = log_prob.gather(1, token.unsqueeze(1)).squeeze(1) # (Batch,)
+        token_log_prob = log_prob.gather(1, token).squeeze(1) # (Batch,)
+        
+        token_squeezed = token.squeeze(1)
         
         # Kaydet
-        seqs.append(token)
+        seqs.append(token_squeezed)
         log_probs.append(token_log_prob)
         
-        # Bir sonraki inputu hazırla
-        tgt[:, step+1] = token
-        
-        # Eğer tüm batch <END> ürettiyse erken durdurulabilir (Opsiyonel, burada basitlik için geçiyoruz)
+        # DÜZELTME: In-place assignment yerine Concatenation kullanıyoruz.
+        # Bu işlem yeni bir tensör yaratır, böylece eski 'curr_tgt' graph'ta bozulmadan kalır.
+        curr_tgt = torch.cat([curr_tgt, token], dim=1)
 
     # Listeleri Tensor yap
     seqs = torch.stack(seqs, dim=1) # (Batch, Len)
