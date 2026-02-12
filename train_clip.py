@@ -12,7 +12,7 @@ import json
 from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
 from data.SECOND_CC.SECONDCC import SECONDCCDataset
 from data.Dubai_CC.DubaiCC import DubaiCCDataset
-from model.model_encoder import Encoder, AttentiveEncoder, ClipMLP, ClipProjector, RSCLIPTextEncoder, ClipLoss
+from model.model_encoder import Encoder, AttentiveEncoder, ClipMLP, ClipProjector, RSCLIPTextEncoder, ClipLoss, ClipEncoder
 from model.model_decoder import DecoderTransformer
 from model.model_encoder import DifferenceAttention
 from utils import *
@@ -81,7 +81,7 @@ def main(args):
 
     # Initialize / load checkpoint
     if args.checkpoint is None:      
-        encoder = Encoder('clip', args) 
+        encoder = ClipEncoder() 
         clip_mlp = ClipMLP(dropout=args.dropout)  
         clip_projector = ClipProjector()
         text_encoder = RSCLIPTextEncoder()

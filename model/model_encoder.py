@@ -52,6 +52,57 @@ class DinoMaskGenerator(nn.Module):
             
             return mask
 
+
+class DinoEncoder(nn.Module):
+    def __init__(self, frozen=True):
+        super().__init__()
+        # 1. DINOv2 Base Modelini Yükle (Çıktı boyutu: 768)
+        # 'dinov2_vitb14': ViT-Base, Patch Size 14
+        print("Loading DINOv2 (ViT-B/14)...")
+        self.backbone = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14')
+        
+        # 2. Modeli Dondur (Eğitilmesini istemiyorsanız)
+        if frozen:
+            self.backbone.eval()
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+        
+        # 3. Normalizasyon Değerleri (ImageNet Standartları)
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+    def preprocess(self, img):
+        # DINOv2 patch size 14 kullanır. 
+        # 16x16 çıktı almak için: 16 * 14 = 224 piksel gerekir.
+        
+        # Normalizasyon
+        img = (img - self.mean) / self.std
+        return img
+
+    def forward(self, img):
+        # Giriş: [Batch, 3, H, W]
+        if img.shape[-2:] != (224, 224):
+            img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
+
+        with torch.no_grad():
+            # forward_features çıktısı bir sözlüktür.
+            # "x_norm_patchtokens": [Batch, N_Patches, 768]
+            output = self.backbone.forward_features(img)
+            patch_tokens = output["x_norm_patchtokens"]
+            
+        # Şekil Düzenleme
+        B, N, C = patch_tokens.shape # Örn: B, 256, 768
+        
+        # Grid Boyutunu Hesapla (N=256 ise H=16)
+        H_grid = int(N**0.5) 
+        
+        # [Batch, N, 768] -> [Batch, 16, 16, 768]
+        # Bu format Transformer/MLP için uygundur.
+        feature_grid = patch_tokens.reshape(B, H_grid, H_grid, C)
+        
+        return feature_grid
+
+
 class ClipMLP(nn.Module):
     def __init__(self, input_dim=768, output_dim=768, expansion_factor=4, dropout=0.1):
         """
