@@ -320,6 +320,11 @@ class ClipEncoder(nn.Module):
         # ViT-B/32'de feature boyutu 768'dir.
         self.model.visual.transformer.resblocks[-1].register_forward_hook(get_activation_deep('last_block'))
 
+
+        self.model.eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
+
     def forward(self, img):
         # 1. Resize
         img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
