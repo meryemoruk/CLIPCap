@@ -303,19 +303,17 @@ class DecoderTransformer(nn.Module):
         return seqs
 
 
-    def sample1(self, x1, x2, k=1):
+    def sample_beam(self, x, k=1):
         """
-        :param x1, x2: encoded images, a tensor of dimension (batch_size, channel, enc_image_size, enc_image_size)
+        :param x: encoded images, a tensor of dimension (batch_size, channel, enc_image_size*enc_image_size)
         :param max_lengths: maximum length of the generated captions
         :param k: beam_size
         """
+        batch, channel, L = x.shape
+        assert batch == 1, "batch size must be 1"
+        x = x.view(batch, channel, -1).unsqueeze(0).expand(k, -1, -1, -1).reshape(batch*k, channel, L).permute(2, 0, 1) #(h*w, batch, embed_dim)
 
-        x = torch.cat([x1, x2], dim = 1)
-        x = self.LN(self.Conv1(x))
-        batch, channel, h, w = x.shape
-        x = x.view(batch, channel, -1).unsqueeze(0).expand(k, -1, -1, -1).reshape(batch*k, channel, h*w).permute(2, 0, 1) #(h*w, batch, feature_dim)
-
-        tgt = torch.zeros(k*batch, self.max_lengths).to(torch.int64).cuda()
+        tgt = torch.zeros(k*batch, self.max_lengths).to(torch.int64).cuda() #(batch_size*k, self.max_lengths)
 
         mask = (torch.triu(torch.ones(self.max_lengths, self.max_lengths)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
@@ -329,16 +327,26 @@ class DecoderTransformer(nn.Module):
             word_emb = self.vocab_embedding(tgt)
             word_emb = word_emb.transpose(1, 0)
             word_emb = self.position_encoding(word_emb)
+            
             pred = self.transformer(word_emb, x, tgt_mask=mask)
+
             pred = self.wdc(self.dropout(pred))  # (length, batch, vocab_size)
             scores = pred.permute(1, 0, 2) # (batch, length, vocab_size)
             scores = scores[:, step, :].squeeze(1)  # [batch, 1, vocab_size] -> [batch, vocab_size]
             scores = F.log_softmax(scores, dim=1)
             scores = top_k_scores.expand_as(scores) + scores
-            top_k_scores, top_k_words = scores.view(-1).topk(k, 0, True, True)  # (s)
+            if step == 0:
+                top_k_scores, top_k_words = scores[0].topk(k, 0, True, True)
+            else:
+                top_k_scores, top_k_words = scores.view(-1).topk(k, 0, True, True)  # (s)
+
+            # Convert unrolled indices to actual indices of scores
+            # prev_word_inds = top_k_words // vocab_size  # (s)
             prev_word_inds = torch.div(top_k_words, self.vocab_size, rounding_mode='floor')
             next_word_inds = top_k_words % self.vocab_size  # (s)
+            # Add new words to sequences
             seqs = torch.cat([seqs[prev_word_inds], next_word_inds.unsqueeze(1)], dim = 1)
+            # Which sequences are incomplete (didn't reach <end>)?
             incomplete_inds = [ind for ind, next_word in enumerate(next_word_inds) if
                                next_word != self.word_vocab['<END>']]
             complete_inds = list(set(range(len(next_word_inds))) - set(incomplete_inds))
@@ -362,4 +370,3 @@ class DecoderTransformer(nn.Module):
         i = complete_seqs_scores.index(max(complete_seqs_scores))
         seq = complete_seqs[i]
         return seq
-
