@@ -352,10 +352,17 @@ def main(args):
 
             #save_checkpoint                
             print('Save Model')  
-            state = {'encoder_dict': encoder.state_dict(), 
-                    'encoder_trans_dict': encoder_trans.state_dict(),   
-                    'decoder_dict': decoder.state_dict()
-                    }                     
+            state = {
+                'epoch': epoch,
+                'avg_score': best_avg,
+                'bleu-4': Bleu_4,
+                'encoder_dict': encoder.state_dict(), 
+                'encoder_trans_dict': encoder_trans.state_dict(),   
+                'decoder_dict': decoder.state_dict(),
+                'encoder_optimizer': encoder_optimizer,
+                'encoder_trans_optimizer': encoder_trans_optimizer,
+                'decoder_optimizer': decoder_optimizer
+            }                      
             model_name = str(args.data_name)+'_batchsize_'+str(args.train_batchsize)+'_'+str(args.network)+'Bleu_4_'+str(round(10000*best_bleu4))+'.pth'
             torch.save(state, os.path.join(args.savepath, model_name))
         else:
