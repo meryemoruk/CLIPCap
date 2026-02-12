@@ -223,25 +223,23 @@ class Encoder(nn.Module):
         with torch.no_grad():
             mask = self.dino(imageA, imageB)
 
-        
-        
-        # mask = F.interpolate(mask, size=(224, 224), mode='bicubic')
+            # mask = F.interpolate(mask, size=(224, 224), mode='bicubic')
 
-        # mask_feat = self.encoder(mask)
+            # mask_feat = self.encoder(mask)
 
-        # maskedA = imageA * mask
-        # maskedB = imageB * mask
+            # maskedA = imageA * mask
+            # maskedB = imageB * mask
 
-        # feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
-        # feat2 = self.model(imageB)
+            # feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
+            # feat2 = self.model(imageB)
 
-        featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
-        featB = self.model(imageB)
+            featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
+            featB = self.model(imageB)
 
-        mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='nearest')
+            mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='nearest')
 
-        featA = featA * mask_spatial
-        featB = featB * mask_spatial
+            featA = featA * mask_spatial
+            featB = featB * mask_spatial
 
         # maskedfeat1 = torch.cat([feat1, maskedfeat1], dim=1)
         # maskedfeat2 = torch.cat([feat2, maskedfeat2], dim=1)
