@@ -23,9 +23,6 @@ class SECONDCCDataset(Dataset):
         self.split = split
         self.max_length = max_length
         
-        # ClipEncoder için ImageNet İstatistikleri
-        self.mean = [0.485, 0.456, 0.406]
-        self.std = [0.229, 0.224, 0.225]
 
         assert self.split in {'train', 'val', 'test'}
         
@@ -111,14 +108,7 @@ class SECONDCCDataset(Dataset):
         
         # (H, W, C) -> (C, H, W)
         imgA = np.moveaxis(imgA, -1, 0)     
-        imgB = np.moveaxis(imgB, -1, 0)
-
-        # ImageNet Normalizasyonu
-        for i in range(len(self.mean)):
-            imgA[i,:,:] -= self.mean[i]
-            imgA[i,:,:] /= self.std[i]
-            imgB[i,:,:] -= self.mean[i]
-            imgB[i,:,:] /= self.std[i]      
+        imgB = np.moveaxis(imgB, -1, 0)   
 
         # --- 2. Token İşlemleri ve Sabitleme ---
         # [ÇÖZÜM 2] Caption sayısını sabitleme (Batch yapabilmek için)

@@ -1,3 +1,6 @@
+#burası recall'u arttırmak için attention pooling eklemeden önceki encoder dosyası. recall 13 civarı gelmişti.
+
+
 import torch
 from torch import nn
 import torchvision.models as models
@@ -24,8 +27,6 @@ class DinoMaskGenerator(nn.Module):
         self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
     def preprocess(self, img):
-        # 1. Resize (224'ün katları)
-        img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
         # 2. Normalize
         img = (img - self.mean) / self.std
         return img
@@ -72,8 +73,6 @@ class DinoEncoder(nn.Module):
     def preprocess(self, img):
         # DINOv2 patch size 14 kullanır. 
         # 16x16 çıktı almak için: 16 * 14 = 224 piksel gerekir.
-        if img.shape[-2:] != (224, 224):
-            img = F.interpolate(img, size=(224, 224), mode='bicubic', align_corners=False)
         
         # Normalizasyon
         img = (img - self.mean) / self.std
@@ -182,21 +181,10 @@ class DinoProjector(nn.Module):
             projected: [Batch, 512] boyunda CLIP uyumlu vektör.
         """
         
-        # 1. Pooling (Global Average)
-        # Eğer giriş [B, 16, 16, 768] ise -> Spatial boyutlar (1 ve 2) üzerinden ortalama al
-        if x.ndim == 4:
-            pooled = x.mean(dim=(1, 2)) # Sonuç: [Batch, 768]
-            
-        # Eğer giriş [B, 256, 768] ise -> Patch boyutu (1) üzerinden ortalama al
-        elif x.ndim == 3:
-            pooled = x.mean(dim=1)      # Sonuç: [Batch, 768]
-        else:
-            # Zaten [B, 768] ise dokunma
-            pooled = x
 
         # 2. Projection (Loss için boyut indirgeme)
         # [Batch, 768] -> [Batch, 512]
-        projected = self.projector(pooled)
+        projected = self.projector(x)
         
         return projected
 
@@ -381,65 +369,11 @@ class Encoder(nn.Module):
     Encoder.
     """
 
-    def __init__(self, network):
+    def __init__(self, network, args):
         super(Encoder, self).__init__()
         self.network = network
-        if self.network=='alexnet': #256,7,7
-            cnn = models.alexnet(pretrained=True)
-            modules = list(cnn.children())[:-2]
-        elif self.network=='vgg11': #512,1/32H,1/32W
-            cnn = models.vgg11(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='vgg16': #512,1/32H,1/32W
-            cnn = models.vgg16(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='vgg19':#512,1/32H,1/32W
-            cnn = models.vgg19(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='inception': #2048,6,6
-            cnn = models.inception_v3(pretrained=True, aux_logits=False)  
-            modules = list(cnn.children())[:-3]
-        elif self.network=='resnet18': #512,1/32H,1/32W
-            cnn = models.resnet18(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='resnet34': #512,1/32H,1/32W
-            cnn = models.resnet34(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='resnet50': #2048,1/32H,1/32W
-            cnn = models.resnet50(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='resnet101':  #2048,1/32H,1/32W
-            cnn = models.resnet101(pretrained=True)  
-            # Remove linear and pool layers (since we're not doing classification)
-            modules = list(cnn.children())[:-2]
-        elif self.network=='resnet152': #512,1/32H,1/32W
-            cnn = models.resnet152(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='resnext50_32x4d': #2048,1/32H,1/32W
-            cnn = models.resnext50_32x4d(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='resnext101_32x8d':#2048,1/256H,1/256W
-            cnn = models.resnext101_32x8d(pretrained=True)  
-            modules = list(cnn.children())[:-1]
-        elif self.network=='densenet121': #no AdaptiveAvgPool2d #1024,1/32H,1/32W
-            cnn = models.densenet121(pretrained=True) 
-            modules = list(cnn.children())[:-1] 
-        elif self.network=='densenet169': #1664,1/32H,1/32W
-            cnn = models.densenet169(pretrained=True)  
-            modules = list(cnn.children())[:-1]
-        elif self.network=='densenet201': #1920,1/32H,1/32W
-            cnn = models.densenet201(pretrained=True)  
-            modules = list(cnn.children())[:-1]
-        elif self.network=='regnet_x_400mf': #400,1/32H,1/32W
-            cnn = models.regnet_x_400mf(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='regnet_x_8gf': #1920,1/32H,1/32W
-            cnn = models.regnet_x_8gf(pretrained=True)  
-            modules = list(cnn.children())[:-2]
-        elif self.network=='regnet_x_16gf': #2048,1/32H,1/32W
-            cnn = models.regnet_x_16gf(pretrained=True) 
-            modules = list(cnn.children())[:-2]
-        elif self.network=='clip':
+        
+        if self.network=='clip':
             clip = ClipEncoder()
         elif self.network=='dino':
             dino = DinoEncoder()
@@ -447,7 +381,7 @@ class Encoder(nn.Module):
         # train_dino.py'de dropout=0.1 varsayılan olarak kullanılıyor.
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self.dino_mlp = DinoMLP(dropout=0.1).to(device)
+        self.dino_mlp = DinoMLP(dropout=args.dropout).to(device)
 
         # 2. Checkpoint Dosyasını Yükleyin
         checkpoint_path = "./models_checkpoint/SECOND_CC_Best_Recall.pth" # Kendi dosya yolunuzu yazın
@@ -476,11 +410,7 @@ class Encoder(nn.Module):
             for param in self.dino_mlp.parameters():
                 param.requires_grad = False
             self.dino_mlp.eval()
-        else:
-            self.model = nn.Sequential(*modules)
-            # Resize image to fixed size to allow input images of variable size
-            # self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
-            self.fine_tune()
+            self.dino = DinoMaskGenerator()
 
        
     def forward(self, imageA, imageB):
@@ -490,17 +420,37 @@ class Encoder(nn.Module):
         :param images: images, a tensor of dimensions (batch_size, 3, image_size, image_size)
         :return: encoded images
         """
+        # 1. Resize (224'ün katları)
+        imageA = F.interpolate(imageA, size=(224, 224), mode='bicubic', align_corners=False)
+        imageB = F.interpolate(imageB, size=(224, 224), mode='bicubic', align_corners=False)
+
         mask =  None
-        # mask = self.dino((imageA), (imageB))
+        with torch.no_grad():
+            mask = self.dino(imageA, imageB)
 
-        feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
-        feat2 = self.model(imageB)
+            # mask = F.interpolate(mask, size=(224, 224), mode='bicubic')
 
-        feat1 = self.dino_mlp(feat1)  # (batch_size, 2048, image_size/32, image_size/32)
-        feat2 = self.dino_mlp(feat2)
+            # mask_feat = self.encoder(mask)
 
-        feat1 = feat1.permute(0, 3, 1, 2)
-        feat2 = feat2.permute(0, 3, 1, 2)
+            # maskedA = imageA * mask
+            # maskedB = imageB * mask
+
+            # feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
+            # feat2 = self.model(imageB)
+
+            feat1 = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
+            feat2 = self.model(imageB)
+
+            feat1 = self.dino_mlp(feat1)  # (batch_size, 2048, image_size/32, image_size/32)
+            feat2 = self.dino_mlp(feat2)
+
+            feat1 = feat1.permute(0, 3, 1, 2)
+            feat2 = feat2.permute(0, 3, 1, 2)
+
+            mask_spatial = F.interpolate(mask, size=feat1.shape[2:], mode='bicubic')
+
+            featA = featA * mask_spatial
+            featB = featB * mask_spatial
 
         return feat1, feat2, mask
 
@@ -586,6 +536,26 @@ class Transformer(nn.Module):
             x = self.norm2(self.feedforward(x) + x)
 
         return x
+
+class DifferenceAttention(nn.Module):
+    def __init__(self, dim, heads=8):
+        super().__init__()
+        self.cross_attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads, batch_first=True)
+        self.layer_norm = nn.LayerNorm(dim)
+
+    def forward(self, img_feat_A, img_feat_B):
+        # img_feat: [Batch, Sequence_Len, Dim] (Örn: B, 256, 768)
+        
+        # Query: After Image (Değişimi aradığımız yer)
+        # Key/Value: Before Image (Referans)
+        
+        # Before görüntüsüne göre "farklılaşan" özellikleri bul
+        attn_out, _ = self.cross_attn(query=img_feat_B, key=img_feat_A, value=img_feat_A)
+        
+        # After görüntüsünden, Before ile eşleşen kısımları çıkar (Soft Subtraction)
+        difference = img_feat_B - attn_out 
+        
+        return self.layer_norm(difference)
 
 class AttentiveEncoder(nn.Module):
     """

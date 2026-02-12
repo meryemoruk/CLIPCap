@@ -54,7 +54,7 @@ def main(args):
         word_vocab = json.load(f)
     # Initialize / load checkpoint
     if args.checkpoint is None:      
-        encoder = Encoder(args.network)   
+        encoder = Encoder(args.network, args)   
         encoder.fine_tune(args.fine_tune_encoder)     
         encoder_optimizer = torch.optim.Adam(params=encoder.parameters(),
                                             lr=args.encoder_lr) if args.fine_tune_encoder else None
@@ -338,7 +338,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_layers', type=int, default=3)
     parser.add_argument('--decoder_n_layers', type=int, default=1)
     parser.add_argument('--hidden_dim', type=int, default=512)
-    parser.add_argument('--attention_dim', type=int, default=768)
-    parser.add_argument('--feature_dim', type=int, default=768)
+    parser.add_argument('--attention_dim', type=int, default=512)
+    parser.add_argument('--feature_dim', type=int, default=512)
     args = parser.parse_args()
     main(args)

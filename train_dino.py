@@ -1,3 +1,5 @@
+#burası recall'u arttırmak için attention pooling eklemeden önceki dino dosyası. recall 13 civarı gelmişti.
+
 import time
 import os
 import numpy as np
@@ -12,6 +14,7 @@ from data.SECOND_CC.SECONDCC import SECONDCCDataset
 from data.Dubai_CC.DubaiCC import DubaiCCDataset
 from model.model_encoder import Encoder, AttentiveEncoder, DinoEncoder, DinoMLP, DinoProjector, RSCLIPTextEncoder, ClipLoss
 from model.model_decoder import DecoderTransformer
+from model.model_encoder import DifferenceAttention
 from utils import *
 import clip
 
@@ -90,7 +93,8 @@ def main(args):
     text_encoder = text_encoder.cuda()
     
     criterion = ClipLoss().cuda()
-    optimizer = torch.optim.AdamW(list(dino_mlp.parameters()) + list(dino_projection.parameters()) + [criterion.logit_scale], lr=args.lr)
+    diff_attn = DifferenceAttention(dim=768, heads=8).cuda()
+    optimizer = torch.optim.AdamW(list(dino_mlp.parameters()) + list(dino_projection.parameters()) +list(diff_attn.parameters()) + [criterion.logit_scale], lr=args.lr)
 
     # PARAMETRE İSTATİSTİKLERİ
     print("-" * 50)
@@ -155,16 +159,26 @@ def main(args):
             img_feat_A = dino_mlp(img_feat_A)
             img_feat_B = dino_mlp(img_feat_B)
 
-            # Pooling (Eğer projection içinde yoksa burada yapılmalı)
-            # DINO [B, 16, 16, 768] -> Mean -> [B, 768]
-            vec_A = img_feat_A.mean(dim=(1, 2))
-            vec_B = img_feat_B.mean(dim=(1, 2))
+            b, h, w, c = img_feat_A.shape
+            seq_A = img_feat_A.reshape(b, h*w, c) # [B, 256, 768]
+            seq_B = img_feat_B.reshape(b, h*w, c)
 
-            proj_A = dino_projection(vec_A)
-            proj_B = dino_projection(vec_B)
+            diff_seq = diff_attn(seq_A, seq_B)
+            diff_vec = diff_seq.mean(dim=1)
 
-            diff_feat = proj_B - proj_A
-            diff_feat = diff_feat / diff_feat.norm(dim=-1, keepdim=True)
+            diff_feat = dino_projection(diff_vec)
+            diff_feat = diff_feat / diff_feat.norm(dim=-1, keepdim=True)    
+
+            # # Pooling (Eğer projection içinde yoksa burada yapılmalı)
+            # # DINO [B, 16, 16, 768] -> Mean -> [B, 768]
+            # vec_A = img_feat_A.mean(dim=(1, 2))
+            # vec_B = img_feat_B.mean(dim=(1, 2))
+
+            # proj_A = dino_projection(vec_A)
+            # proj_B = dino_projection(vec_B)
+
+            # diff_feat = proj_B - proj_A
+            # diff_feat = diff_feat / diff_feat.norm(dim=-1, keepdim=True)
             
             with torch.no_grad():
                 if isinstance(raw_captions, tuple): raw_captions = list(raw_captions)
@@ -208,16 +222,29 @@ def main(args):
                 imgA = imgA.cuda()
                 imgB = imgB.cuda()
                 
-                fA = dino_projection(dino_mlp(encoder(imgA)).mean(dim=(1,2)))
-                fB = dino_projection(dino_mlp(encoder(imgB)).mean(dim=(1,2)))
+                # 1. Encoder'dan geçir
+                feat_A = dino_mlp(encoder(imgA)) # [B, 16, 16, 768]
+                feat_B = dino_mlp(encoder(imgB)) # [B, 16, 16, 768]
                 
-                diff_feat = fB - fA
+                # 2. Sequence formatına çevir [B, 256, 768]
+                b, h, w, c = feat_A.shape
+                seq_A = feat_A.reshape(b, h*w, c)
+                seq_B = feat_B.reshape(b, h*w, c)
+                
+                # 3. Difference Attention Uygula (Validation'da da bunu kullanmalı!)
+                diff_seq = diff_attn(seq_A, seq_B)
+                
+                # 4. Ortalama al ve Project et
+                diff_vec = diff_seq.mean(dim=1) # [B, 768]
+                diff_feat = dino_projection(diff_vec)
+                
+                # 5. Normalize et
                 diff_feat = diff_feat / diff_feat.norm(dim=-1, keepdim=True)
                 all_image_feats.append(diff_feat)
                 
                 if isinstance(raw_captions, tuple): raw_captions = list(raw_captions)
                 text_inputs = clip.tokenize(raw_captions, truncate=True).cuda()
-                text_embeds = text_encoder(text_inputs).float() # .float() eklendi
+                text_embeds = text_encoder(text_inputs).float() 
                 text_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True)
                 all_text_feats.append(text_embeds)
 
@@ -235,7 +262,7 @@ def main(args):
             current_score = i2t_res['R@1'] + i2t_res['R@5'] + t2i_res['R@1'] + t2i_res['R@5']
             
             # SCHEDULER STEP (Validation Sonucuna Göre)
-            scheduler.step(current_score)
+            scheduler.step() # İçini boş bırak, epoch'u kendi saysın.
             
             # MODEL KAYDETME
             if current_score > best_score:
