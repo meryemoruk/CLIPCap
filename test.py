@@ -217,7 +217,7 @@ if __name__ == '__main__':
     parser.add_argument('--network', default='resnet101', help='define the encoder to extract features:resnet101,vgg16')
     parser.add_argument('--gpu_id', type=int, default=0, help='gpu id in the training.')
     parser.add_argument('--workers', type=int, default=2, help='for data-loading; right now, only 0 works with h5pys in windows.')
-    parser.add_argument('--encoder_dim',default=768, help='the dimension of extracted features using different network=768,512')
+    parser.add_argument('--encoder_dim',default=1024, help='the dimension of extracted features using different network=768,512')
     parser.add_argument('--feat_size', default=16, help='define the output size of encoder to extract features')
     parser.add_argument('--n_heads', type=int, default=8, help='Multi-head attention in Transformer.')
     
@@ -225,8 +225,8 @@ if __name__ == '__main__':
     parser.add_argument('--decoder_n_layers', type=int, default=1)
 
     parser.add_argument('--hidden_dim', type=int, default=512)
-    parser.add_argument('--attention_dim', type=int, default=768)
-    parser.add_argument('--feature_dim', type=int, default=768)
+    parser.add_argument('--attention_dim', type=int, default=512)
+    parser.add_argument('--feature_dim', type=int, default=512)
     parser.add_argument('--dropout', type=float, default=0.1, help='dropout')
     # Test
     parser.add_argument('--test_batchsize', default=1, help='batch_size for validation')
