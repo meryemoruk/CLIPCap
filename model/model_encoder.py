@@ -449,8 +449,8 @@ class Encoder(nn.Module):
 
             mask_spatial = F.interpolate(mask, size=feat1.shape[2:], mode='bicubic')
 
-            featA = featA * mask_spatial
-            featB = featB * mask_spatial
+            feat1 = feat1 * mask_spatial
+            feat2 = feat2 * mask_spatial
 
         return feat1, feat2, mask
 
