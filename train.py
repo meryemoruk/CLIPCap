@@ -312,7 +312,7 @@ def main(args):
                 for j in hypotheses[0]:
                     ref_caption += (list(word_vocab.keys())[j]) + " "
                 
-                if ind % args.print_freq == 0:
+                if ind == 0 or ind == 120:
                     print("Prediction:")
                     print(pred_caption)
                     print("Referance:")
