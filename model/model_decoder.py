@@ -215,6 +215,11 @@ class DecoderTransformer(nn.Module):
 
         self.init_weights()  # initialize some layers with the uniform distribution
 
+        # __init__ metodunun sonuna ekle:
+        self.wdc.weight = self.vocab_embedding.weight
+
+        # ÖNEMLİ: wdc'nin bias'ı kalabilir ama weight matrisleri aynı belleği kullanmalı.
+
     def init_weights(self):
         """
         Initializes some parameters with values from the uniform distribution, for easier convergence
