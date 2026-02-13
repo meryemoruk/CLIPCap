@@ -191,7 +191,7 @@ class DecoderTransformer(nn.Module):
                 self.Mamba.append(MambaModel(config_1))
             # assert n_layers==1
         elif self.decoder_type == 'gpt':
-            config_2 = GPT2Config(n_layer=1, n_embd=encoder_dim)
+            config_2 = GPT2Config(n_layer=1, n_embd=encoder_dim, n_head=16)
             self.GPT = nn.ModuleList([]) #GPT2Model(config_2)
             for i in range(n_layers):
                 self.GPT.append(GPT2Model(config_2))
