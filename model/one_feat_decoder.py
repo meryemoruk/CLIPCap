@@ -156,7 +156,7 @@ class DecoderTransformer(nn.Module):
     Decoder with Transformer.
     """
 
-    def __init__(self, decoder_type, embed_dim, vocab_size, max_lengths, word_vocab, n_head, n_layers, dropout):
+    def __init__(self, encoder_dim, feature_dim ,vocab_size, max_lengths, word_vocab, n_head, n_layers, dropout):
         """
         :param n_head: the number of heads in Transformer
         :param n_layers: the number of layers of Transformer
@@ -166,38 +166,44 @@ class DecoderTransformer(nn.Module):
         # n_layers = 1
         print("decoder_n_layers=", n_layers)
 
-        self.embed_dim = embed_dim
+        decoder_type = 'transformer_decoder'
+
+        print("-" * 50)
+        print("Decoder Type: " + decoder_type)
+        print("-" * 50)
+
+        self.encoder_dim = encoder_dim
         self.vocab_size = vocab_size
         self.max_lengths = max_lengths
         self.word_vocab = word_vocab
         self.dropout = dropout
         # embedding layer
-        self.vocab_embedding = nn.Embedding(vocab_size, self.embed_dim)  # vocaburaly embedding
+        self.vocab_embedding = nn.Embedding(vocab_size, self.encoder_dim)  # vocaburaly embedding
         # Mamba
         self.decoder_type = decoder_type#'gpt' # 'mamba' or 'gpt' or 'transformer_decoder'
         print("decoder_type=", self.decoder_type)
         if self.decoder_type == 'mamba':
             # from model.mamba_block import CaMambaModel
-            config_1 = MambaConfig(num_hidden_layers=1, hidden_size=embed_dim)
+            config_1 = MambaConfig(num_hidden_layers=1, hidden_size=encoder_dim)
             self.Mamba = nn.ModuleList([])
             for i in range(n_layers):
                 self.Mamba.append(MambaModel(config_1))
             # assert n_layers==1
         elif self.decoder_type == 'gpt':
-            config_2 = GPT2Config(n_layer=1, n_embd=embed_dim)
+            config_2 = GPT2Config(n_layer=1, n_embd=encoder_dim)
             self.GPT = nn.ModuleList([]) #GPT2Model(config_2)
             for i in range(n_layers):
                 self.GPT.append(GPT2Model(config_2))
         else:
             # Transformer layer
-            decoder_layer = Mesh_TransformerDecoderLayer(embed_dim, n_head, dim_feedforward=embed_dim * 4,
+            decoder_layer = Mesh_TransformerDecoderLayer(encoder_dim, n_head, dim_feedforward=encoder_dim * 4,
                                                          dropout=self.dropout)
             self.transformer = StackTransformer(decoder_layer, n_layers)
 
-        self.position_encoding = PositionalEncoding(embed_dim, max_len=max_lengths)
+        self.position_encoding = PositionalEncoding(encoder_dim, max_len=max_lengths)
 
         # Linear layer to find scores over vocabulary
-        self.wdc = nn.Linear(embed_dim, vocab_size)
+        self.wdc = nn.Linear(encoder_dim, vocab_size)
         self.dropout = nn.Dropout(p=self.dropout)
 
         self.init_weights()  # initialize some layers with the uniform distribution
@@ -226,10 +232,10 @@ class DecoderTransformer(nn.Module):
         mask = mask.cuda()
         tgt_pad_mask = (encoded_captions == self.word_vocab['<NULL>'])|(encoded_captions == self.word_vocab['<END>'])
 
-        word_emb = self.vocab_embedding(encoded_captions) #(batch, length, embed_dim)
-        word_emb = word_emb.transpose(1, 0)#(length, batch, embed_dim)
+        word_emb = self.vocab_embedding(encoded_captions) #(batch, length, encoder_dim)
+        word_emb = word_emb.transpose(1, 0)#(length, batch, encoder_dim)
 
-        word_emb = self.position_encoding(word_emb)  # (length, batch, embed_dim)
+        word_emb = self.position_encoding(word_emb)  # (length, batch, encoder_dim)
 
 
         if self.decoder_type == 'mamba' or self.decoder_type == 'gpt':
@@ -253,7 +259,7 @@ class DecoderTransformer(nn.Module):
             pred = pred.permute(1, 0, 2)
         else:
             pred = self.transformer(word_emb, x, tgt_mask=mask,
-                                    tgt_key_padding_mask=tgt_pad_mask)  # (length, batch, embed_dim)
+                                    tgt_key_padding_mask=tgt_pad_mask)  # (length, batch, encoder_dim)
         pred = self.wdc(self.dropout(pred))  # (length, batch, vocab_size)
         pred = pred.permute(1, 0, 2)
 
@@ -271,7 +277,7 @@ class DecoderTransformer(nn.Module):
         :param x: encoded images, a tensor of dimension (batch_size, channel, enc_image_size* enc_image_size)
         """
         batch, channel = x.size(0), x.size(1)
-        x = x.view(batch, channel, -1).permute(2, 0, 1)#(hw, batch_size, embed_dim)
+        x = x.view(batch, channel, -1).permute(2, 0, 1)#(hw, batch_size, encoder_dim)
 
         tgt = torch.zeros(batch, self.max_lengths).to(torch.int64).cuda() #(batch_size, self.max_lengths)
 
@@ -283,7 +289,7 @@ class DecoderTransformer(nn.Module):
         for step in range(self.max_lengths):
             tgt_pad_mask = (tgt == self.word_vocab['<NULL>'])
             word_emb = self.vocab_embedding(tgt)
-            word_emb = word_emb.transpose(1, 0)#(length, batch, embed_dim)
+            word_emb = word_emb.transpose(1, 0)#(length, batch, encoder_dim)
 
             word_emb = self.position_encoding(word_emb)
             if self.decoder_type == 'mamba' or self.decoder_type == 'gpt':
@@ -333,7 +339,7 @@ class DecoderTransformer(nn.Module):
         """
         batch, channel, L = x.shape
         assert batch == 1, "batch size must be 1"
-        x = x.view(batch, channel, -1).unsqueeze(0).expand(k, -1, -1, -1).reshape(batch*k, channel, L).permute(2, 0, 1) #(h*w, batch, embed_dim)
+        x = x.view(batch, channel, -1).unsqueeze(0).expand(k, -1, -1, -1).reshape(batch*k, channel, L).permute(2, 0, 1) #(h*w, batch, encoder_dim)
 
         tgt = torch.zeros(k*batch, self.max_lengths).to(torch.int64).cuda() #(batch_size*k, self.max_lengths)
 
