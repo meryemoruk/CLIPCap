@@ -93,6 +93,15 @@ def sample_scst_wrapper(self, x1, x2, sample_max_len=40):
     
     return seqs, log_probs
 
+def optimizer_to_device(optimizer, device):
+    """
+    Optimizer state'ini (momentum, vb.) belirtilen cihaza taşır.
+    """
+    for state in optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(device)
+
 def sample_greedy_wrapper(self, x1, x2, sample_max_len=40):
     """
     SCST Baseline için Batch Uyumlu Greedy Sampling.
@@ -312,11 +321,30 @@ def main(args):
     # -----------------------
 
     # Move to GPU
+    print("--- FLAG 1: Modeller GPU'ya taşınıyor... ---")
+    # Move to GPU
     encoder = encoder.cuda()
     encoder_trans = encoder_trans.cuda()
     decoder = decoder.cuda()
     
     criterion_ce = torch.nn.CrossEntropyLoss().cuda()
+
+    print("--- FLAG 2: Optimizer State'leri GPU'ya taşınıyor... ---")
+    # DÜZELTME: Optimizer state'lerini manuel olarak GPU'ya alıyoruz
+    if decoder_optimizer is not None:
+        optimizer_to_device(decoder_optimizer, 'cuda')
+    
+    if encoder_trans_optimizer is not None:
+        optimizer_to_device(encoder_trans_optimizer, 'cuda')
+        
+    if encoder_optimizer is not None:
+        optimizer_to_device(encoder_optimizer, 'cuda')
+    print("--- FLAG 3: Tüm taşınma işlemleri tamamlandı. ---")
+
+    # Parametre sayımı
+    count_parameters(encoder, "Encoder")
+    count_parameters(encoder_trans, "AttentiveEncoder")
+    count_parameters(decoder, "Decoder")
 
     # Parametre sayımı
     count_parameters(encoder, "Encoder")
@@ -424,6 +452,8 @@ def main(args):
                 
                 acc = 0 # SCST'de accuracy anlamsızdır, reward takip edilir
 
+            if id % 10 == 0: # Her adımda basmasın diye modül aldık
+                 print(f"--- FLAG 4: Step {id} - Backward ve Step başlıyor... ---")
             # Back prop
             loss.backward()
             
