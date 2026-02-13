@@ -431,7 +431,9 @@ def main(args):
                 torch.nn.utils.clip_grad_value_(decoder.parameters(), args.grad_clip)
                 torch.nn.utils.clip_grad_value_(encoder_trans.parameters(), args.grad_clip)
                 if encoder_optimizer is not None:
-                    torch.nn.utils.clip_grad_value_(encoder.parameters(), args.grad_clip)
+                    encoder_grads = [p for p in encoder.parameters() if p.grad is not None]
+                    if len(encoder_grads) > 0:
+                        torch.nn.utils.clip_grad_value_(encoder_grads, args.grad_clip)
 
             decoder_optimizer.step()
             encoder_trans_optimizer.step()

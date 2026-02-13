@@ -426,3 +426,4 @@ class AttentiveEncoder(nn.Module):
         img2 = img_sa2.reshape(batch, h, w, c).transpose(-1, 1)
 
         return img1, img2
+    
