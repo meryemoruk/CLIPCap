@@ -93,7 +93,7 @@ def main(args):
     text_encoder = text_encoder.cuda()
     
     criterion = ClipLoss().cuda()
-    diff_attn = DifferenceAttention(dim=768, heads=8).cuda()
+    diff_attn = DifferenceAttention(dim=1024, heads=8).cuda()
     optimizer = torch.optim.AdamW(list(clip_mlp.parameters()) + list(clip_projector.parameters()) +list(diff_attn.parameters()) + [criterion.logit_scale], lr=args.lr)
 
     # PARAMETRE İSTATİSTİKLERİ
