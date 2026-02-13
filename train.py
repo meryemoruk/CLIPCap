@@ -312,11 +312,11 @@ def main(args):
                 for j in references[0][0]:
                     ref_caption += (list(word_vocab.keys())[j]) + " "
                 
-                if ind == 0 or ind == 120:
-                    print("Prediction:")
-                    print(pred_caption)
-                    print("Referance:")
-                    print(ref_caption)
+                
+                print("Prediction:")
+                print(pred_caption)
+                print("Referance:")
+                print(ref_caption)
 
                 if ref_caption in nochange_list:
                     nochange_references.append(img_tokens)
