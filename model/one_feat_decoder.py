@@ -156,7 +156,7 @@ class DecoderTransformer(nn.Module):
     Decoder with Transformer.
     """
 
-    def __init__(self, encoder_dim, feature_dim ,vocab_size, max_lengths, word_vocab, n_head, n_layers, dropout):
+    def __init__(self, decoder_type, embed_dim, vocab_size, max_lengths, word_vocab, n_head, n_layers, dropout):
         """
         :param n_head: the number of heads in Transformer
         :param n_layers: the number of layers of Transformer
@@ -166,14 +166,7 @@ class DecoderTransformer(nn.Module):
         # n_layers = 1
         print("decoder_n_layers=", n_layers)
 
-        decoder_type = 'transformer_decoder'
-
-        print("-" * 50)
-        print("Decoder Type: " + decoder_type)
-        print("-" * 50)
-        
-
-        self.embed_dim = encoder_dim
+        self.embed_dim = embed_dim
         self.vocab_size = vocab_size
         self.max_lengths = max_lengths
         self.word_vocab = word_vocab
@@ -185,26 +178,26 @@ class DecoderTransformer(nn.Module):
         print("decoder_type=", self.decoder_type)
         if self.decoder_type == 'mamba':
             # from model.mamba_block import CaMambaModel
-            config_1 = MambaConfig(num_hidden_layers=1, hidden_size=encoder_dim)
+            config_1 = MambaConfig(num_hidden_layers=1, hidden_size=embed_dim)
             self.Mamba = nn.ModuleList([])
             for i in range(n_layers):
                 self.Mamba.append(MambaModel(config_1))
             # assert n_layers==1
         elif self.decoder_type == 'gpt':
-            config_2 = GPT2Config(n_layer=1, n_embd=encoder_dim, n_head=16)
+            config_2 = GPT2Config(n_layer=1, n_embd=embed_dim)
             self.GPT = nn.ModuleList([]) #GPT2Model(config_2)
             for i in range(n_layers):
                 self.GPT.append(GPT2Model(config_2))
         else:
             # Transformer layer
-            decoder_layer = Mesh_TransformerDecoderLayer(encoder_dim, n_head, dim_feedforward=encoder_dim * 4,
+            decoder_layer = Mesh_TransformerDecoderLayer(embed_dim, n_head, dim_feedforward=embed_dim * 4,
                                                          dropout=self.dropout)
             self.transformer = StackTransformer(decoder_layer, n_layers)
 
-        self.position_encoding = PositionalEncoding(encoder_dim, max_len=max_lengths)
+        self.position_encoding = PositionalEncoding(embed_dim, max_len=max_lengths)
 
         # Linear layer to find scores over vocabulary
-        self.wdc = nn.Linear(encoder_dim, vocab_size)
+        self.wdc = nn.Linear(embed_dim, vocab_size)
         self.dropout = nn.Dropout(p=self.dropout)
 
         self.init_weights()  # initialize some layers with the uniform distribution

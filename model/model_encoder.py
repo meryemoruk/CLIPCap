@@ -486,75 +486,50 @@ class ChangeAwareEncoder(nn.Module):
     def __init__(self, feature_dim=1024, heads=8, n_layers=2, hidden_dim=2048, dropout=0.1):
         super().__init__()
         
-        # CLIP çıktı boyutu genelde büyüktür, projeksiyon ile optimize edebilirsiniz
-        # feature_dim (ViT-L/14 için genelde 1024)
+        # Giriş projeksiyonu (CLIP 1024 -> 512 gibi küçültmek hesaplama yükünü azaltır)
+        self.project = nn.Linear(feature_dim, 512) 
         
-        self.pos_encoder = PositionalEncoding(feature_dim)
-        
-        # Image A (Referans) için sadece Self-Attention yeterli
-        self.layers_A = nn.ModuleList([
-            nn.TransformerEncoderLayer(d_model=feature_dim, nhead=heads, dim_feedforward=hidden_dim, batch_first=True)
+        # Sadece Encoder Layer kullanın (Self-Attention)
+        self.layers = nn.ModuleList([
+            nn.TransformerEncoderLayer(d_model=512, nhead=heads, dim_feedforward=hidden_dim, dropout=dropout, batch_first=True)
             for _ in range(n_layers)
         ])
-
-        # Image B (Değişim) için Cross-Attention
-        self.layers_B = nn.ModuleList([
-            CrossAttentionBlock(d_model=feature_dim, nhead=heads, dropout=dropout)
-            for _ in range(n_layers)
-        ])
-
-        # Değişiklik Füzyonu (Change Captioning için Kritik)
-        self.fusion_layer = nn.Sequential(
-            nn.Linear(feature_dim * 2, feature_dim),
-            nn.ReLU(),
-            nn.LayerNorm(feature_dim)
-        )
+        
+        # Son çıkış düzeltme
+        self.output_head = nn.Linear(512, feature_dim)
 
     def forward(self, featA, featB, mask=None):
-        """
-        featA, featB: (Batch, Channel, H, W) -> CLIP'ten gelenler
-        mask: (Batch, 1, H, W) -> DINO'dan gelen attention mask
-        """
-        b, c, h, w = featA.shape
-        
-        # 1. Flatten ve Permute: (Batch, Seq_Len, Channel)
-        featA = featA.flatten(2).transpose(1, 2) # (B, H*W, C)
+        # (Batch, C, H, W) -> (Batch, Seq, C)
+        featA = featA.flatten(2).transpose(1, 2)
         featB = featB.flatten(2).transpose(1, 2)
         
-        # 2. Positional Encoding ekle
-        featA = self.pos_encoder(featA)
-        featB = self.pos_encoder(featB)
+        # Boyut düşürme (Opsiyonel ama önerilir)
+        featA = self.project(featA)
+        featB = self.project(featB)
 
-        # 3. Encoder Blokları
-        # Referans görüntüyü işle
-        for layer in self.layers_A:
-            featA = layer(featA)
-            
-        # Hedef görüntüyü referansa bakarak işle
-        for layer in self.layers_B:
-            featB = layer(tgt=featB, memory=featA)
-
-        # 4. Maske Entegrasyonu (Soft Attention)
-        # DINO maskesini düzleştirip, değişimin olduğu yerlere ağırlık veriyoruz
-        if mask is not None:
-            mask_flat = F.interpolate(mask, size=(h, w), mode='bilinear').flatten(2).transpose(1, 2) # (B, H*W, 1)
-            # Maskeyi featurelara "inject" ediyoruz.
-            # Dikkat: Çarpmak yerine maskeyi concat edip bir MLP'den geçirmek daha iyidir
-            # ama burada basitlik için weighted fusion yapalım:
-            
-            # Değişim özelliklerini maske ile güçlendiriyoruz
-            featB = featB * (1 + mask_flat) 
-
-        # 5. Difference Feature Extraction
-        # Change Captioning için decoder'a hem "Son Durum"u hem de "Farkı" vermelisiniz.
-        diff_feat = featB - featA
+        # 1. Fark Vektörü (Explicit Difference)
+        # Modelin işini kolaylaştırın: Farkı elle verin.
+        diff = featB - featA 
         
-        # Özellikleri birleştir (Concatenate & Fuse)
-        fused_feat = torch.cat([featB, diff_feat], dim=-1) # (B, HW, 2C)
-        out = self.fusion_layer(fused_feat) # (B, HW, C)
-
-        # Çıktıyı tekrar görüntü boyutuna getirmek isterseniz:
-        # out = out.transpose(1, 2).view(b, c, h, w)
+        # 2. Hepsini Birleştir: [Eski, Yeni, Fark]
+        # Bu sayede model hem bağlamı hem de değişimi görür.
+        combined = torch.cat([featA, featB, diff], dim=1) # Seq boyutu 3 katına çıkar (3*49)
         
-        # Ama genelde Caption Decoder (LSTM/Transformer) Sequence bekler:
-        return out  # (Batch, Seq_Len, Feature_Dim)
+        # 3. Maskeyi (Varsa) sadece Diff kısmına uygula veya tamamen kaldır
+        # Şimdilik maskeyi kaldırıyorum, çünkü DINO maskesi captioning'i bozabilir.
+        
+        # 4. Transformer Encoder (Self Attention)
+        for layer in self.layers:
+            combined = layer(combined)
+            
+        # 5. Sadece "Fark" veya "Yeni" kısmını değil, tüm bağlamı decoder'a gönder
+        # Ancak Decoder boyutu sabit bekliyorsa, Average Pooling yapabiliriz veya
+        # sadece 'diff' kısmına karşılık gelen çıkışı alabiliriz.
+        
+        # En iyi yöntem: Decoder'a hepsini vermek.
+        # Eğer decoder token sayısı sorunu yoksa 'combined' döndür.
+        # Eğer varsa, tekrar feature boyutuna indirge.
+        
+        out = self.output_head(combined)
+        
+        return out
