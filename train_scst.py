@@ -368,7 +368,6 @@ def main(args):
             start_time = time.time()
             
             # Mod ayarları
-            # SCST için de train modunda kalmalı (Dropout vb. için)
             decoder.train()
             encoder.eval() 
             encoder_trans.train()
@@ -393,7 +392,7 @@ def main(args):
             loss = 0
             
             if not scst_mode:
-                # --- CROSS ENTROPY LOSS (Klasik Eğitim) ---
+                # --- CROSS ENTROPY LOSS ---
                 scores, caps_sorted, decode_lengths, sort_ind = decoder(feat1, feat2, token, token_len)
                 targets = caps_sorted[:, 1:]
                 scores_packed = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
@@ -401,39 +400,26 @@ def main(args):
                 loss = criterion_ce(scores_packed, targets_packed)
                 acc = accuracy(scores_packed, targets_packed, 5)
             else:
-                # --- SCST LOSS (RL Eğitim) ---
+                # --- SCST LOSS ---
                 
-                # 1. Greedy Search (Baseline) - Gradientsiz
+                # 1. Greedy Search (Baseline)
                 with torch.no_grad():
-                    # Yeni yazdığımız batch uyumlu fonksiyonu kullanıyoruz
                     greedy_seqs = decoder.sample_greedy(feat1, feat2, sample_max_len=args.max_length)
 
-                # 2. Monte-Carlo Sampling (Policy) - Gradientli
-                # Yeni eklenen sample_scst fonksiyonunu kullanıyoruz
+                # 2. Monte-Carlo Sampling (Policy)
                 sample_seqs, sample_log_probs = decoder.sample_scst(feat1, feat2, sample_max_len=args.max_length)
                 
                 # 3. Reward Hesaplama
-                # token.tolist() ground truth referanslarıdır
                 rewards, baselines = get_self_critical_reward(decoder, sample_seqs, greedy_seqs, token.tolist(), word_vocab)
                 
-                # 4. Loss Hesaplama
-                # loss = - (reward - baseline) * log_prob
-                # log_prob shape: (Batch, Len)
-                # reward shape: (Batch,) -> (Batch, 1) yapmalıyız
-                
                 advantage = rewards - baselines
-                
-                # Maskeleme: <END> token sonrası veya padding için log_prob'ları 0 yapmalıyız
-                # Basitçe sample_seqs üzerinden maske oluşturabiliriz
                 pad_mask = (sample_seqs != word_vocab['<NULL>']).float()
                 
-                # Ortalama loss
                 loss = - (advantage.unsqueeze(1) * sample_log_probs * pad_mask).sum() / args.train_batchsize
                 
-                acc = 0 # SCST'de accuracy anlamsızdır, reward takip edilir
+                # DÜZELTME: Ekranda görünsün diye acc değişkenine ortalama reward'ı atıyoruz
+                acc = rewards.mean().item()
 
-            if id % 10 == 0: # Her adımda basmasın diye modül aldık
-                 print(f"--- FLAG 4: Step {id} - Backward ve Step başlıyor... ---")
             # Back prop
             loss.backward()
             
@@ -451,18 +437,23 @@ def main(args):
 
             hist[index_i,0] = time.time() - start_time       
             hist[index_i,1] = loss.item() 
-            hist[index_i,2] = acc
+            hist[index_i,2] = acc # SCST modunda burası Reward, XE modunda Accuracy'dir.
             index_i += 1   
             
             if index_i % args.print_freq == 0:
+                # DÜZELTME: index_i-1 yerine index_i kullanıldı.
+                # Böylece print_freq=1 olsa bile dilimleme hatası (empty slice) olmaz.
+                avg_time = np.mean(hist[index_i-args.print_freq:index_i, 0])
+                avg_loss = np.mean(hist[index_i-args.print_freq:index_i, 1])
+                avg_acc_reward = np.mean(hist[index_i-args.print_freq:index_i, 2])
+                
                 print('Epoch: [{0}][{1}/{2}]\t'
                     'Time: {3:.3f}\t'
                     'Loss: {4:.4f}\t'
-                    'Acc/Reward: {5:.3f}'.format(epoch, index_i %len(train_loader), len(train_loader),
-                                            np.mean(hist[index_i-args.print_freq:index_i-1,0])*args.print_freq,
-                                            np.mean(hist[index_i-args.print_freq:index_i-1,1]),
-                                            np.mean(hist[index_i-args.print_freq:index_i-1,2])))
-
+                    'Acc/Reward: {5:.3f}'.format(epoch, index_i % len(train_loader), len(train_loader),
+                                            avg_time,
+                                            avg_loss,
+                                            avg_acc_reward))
         # --- VALIDATION ---
         decoder.eval()
         encoder_trans.eval()
