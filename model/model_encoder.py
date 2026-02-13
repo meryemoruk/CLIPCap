@@ -204,6 +204,9 @@ class Encoder(nn.Module):
             # self.adaptive_pool = nn.AdaptiveAvgPool2d((encoded_image_size, encoded_image_size))
             self.fine_tune()
 
+        for param in self.model.parameters():
+            param.requires_grad = False
+
         # --- MASKE ---
         self.dino = DinoMaskGenerator()
 
