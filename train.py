@@ -149,7 +149,7 @@ def main(args):
             feat1, feat2, mask = encoder(imgA, imgB)
 
             feat = encoder_trans(feat1, feat2, mask)
-            scores, caps_sorted, decode_lengths, sort_ind = decoder(feat, token, token_len)
+            scores, caps_sorted, decode_lengths, sort_ind = decoder(feat.transpose(1, 2), token, token_len)
 
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
             targets = caps_sorted[:, 1:]
@@ -209,7 +209,7 @@ def main(args):
                 feat1, feat2, mask = encoder(imgA, imgB)
 
                 feat = encoder_trans(feat1, feat2, mask)
-                seq = decoder.sample(feat, k=1)
+                seq = decoder.sample(feat.transpose(1, 2), k=1)
 
                 img_token = token_all.tolist()
                 img_tokens = list(map(lambda c: [w for w in c if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}],
