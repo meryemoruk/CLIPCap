@@ -3,7 +3,7 @@ from torch import nn
 import torchvision.models as models
 from einops import rearrange
 import clip
-import os
+import math
 import torch.nn.functional as F
 
 # --- maske ---
@@ -426,3 +426,135 @@ class AttentiveEncoder(nn.Module):
         img2 = img_sa2.reshape(batch, h, w, c).transpose(-1, 1)
 
         return img1, img2
+    
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        # Sinusoidal Positional Encoding (CLIP özelliklerinde daha stabildir)
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        # x: [Batch, Seq_Len, Channel]
+        return x + self.pe[:x.size(1), :].unsqueeze(0)
+
+class CrossAttentionBlock(nn.Module):
+    def __init__(self, d_model, nhead, dropout=0.1):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+        
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * 4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model * 4, d_model)
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, tgt, memory, mask=None):
+        """
+        tgt: Image B (Current)
+        memory: Image A (Reference)
+        """
+        # 1. Self Attention (Image B kendi içine bakar)
+        tgt2 = self.norm1(tgt)
+        tgt2, _ = self.self_attn(tgt2, tgt2, tgt2)
+        tgt = tgt + self.dropout(tgt2)
+
+        # 2. Cross Attention (Image B, Image A'ya bakar: "Ne değişti?")
+        tgt2 = self.norm2(tgt)
+        tgt2, _ = self.cross_attn(query=tgt2, key=memory, value=memory)
+        tgt = tgt + self.dropout(tgt2)
+
+        # 3. Feed Forward
+        tgt2 = self.norm3(tgt)
+        tgt = tgt + self.dropout(self.ffn(tgt2))
+        
+        return tgt
+
+class ChangeAwareEncoder(nn.Module):
+    def __init__(self, feature_dim=1024, heads=8, n_layers=2, hidden_dim=2048, dropout=0.1):
+        super().__init__()
+        
+        # CLIP çıktı boyutu genelde büyüktür, projeksiyon ile optimize edebilirsiniz
+        # feature_dim (ViT-L/14 için genelde 1024)
+        
+        self.pos_encoder = PositionalEncoding(feature_dim)
+        
+        # Image A (Referans) için sadece Self-Attention yeterli
+        self.layers_A = nn.ModuleList([
+            nn.TransformerEncoderLayer(d_model=feature_dim, nhead=heads, dim_feedforward=hidden_dim, batch_first=True)
+            for _ in range(n_layers)
+        ])
+
+        # Image B (Değişim) için Cross-Attention
+        self.layers_B = nn.ModuleList([
+            CrossAttentionBlock(d_model=feature_dim, nhead=heads, dropout=dropout)
+            for _ in range(n_layers)
+        ])
+
+        # Değişiklik Füzyonu (Change Captioning için Kritik)
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(feature_dim * 2, feature_dim),
+            nn.ReLU(),
+            nn.LayerNorm(feature_dim)
+        )
+
+    def forward(self, featA, featB, mask=None):
+        """
+        featA, featB: (Batch, Channel, H, W) -> CLIP'ten gelenler
+        mask: (Batch, 1, H, W) -> DINO'dan gelen attention mask
+        """
+        b, c, h, w = featA.shape
+        
+        # 1. Flatten ve Permute: (Batch, Seq_Len, Channel)
+        featA = featA.flatten(2).transpose(1, 2) # (B, H*W, C)
+        featB = featB.flatten(2).transpose(1, 2)
+        
+        # 2. Positional Encoding ekle
+        featA = self.pos_encoder(featA)
+        featB = self.pos_encoder(featB)
+
+        # 3. Encoder Blokları
+        # Referans görüntüyü işle
+        for layer in self.layers_A:
+            featA = layer(featA)
+            
+        # Hedef görüntüyü referansa bakarak işle
+        for layer in self.layers_B:
+            featB = layer(tgt=featB, memory=featA)
+
+        # 4. Maske Entegrasyonu (Soft Attention)
+        # DINO maskesini düzleştirip, değişimin olduğu yerlere ağırlık veriyoruz
+        if mask is not None:
+            mask_flat = F.interpolate(mask, size=(h, w), mode='bilinear').flatten(2).transpose(1, 2) # (B, H*W, 1)
+            # Maskeyi featurelara "inject" ediyoruz.
+            # Dikkat: Çarpmak yerine maskeyi concat edip bir MLP'den geçirmek daha iyidir
+            # ama burada basitlik için weighted fusion yapalım:
+            
+            # Değişim özelliklerini maske ile güçlendiriyoruz
+            featB = featB * (1 + mask_flat) 
+
+        # 5. Difference Feature Extraction
+        # Change Captioning için decoder'a hem "Son Durum"u hem de "Farkı" vermelisiniz.
+        diff_feat = featB - featA
+        
+        # Özellikleri birleştir (Concatenate & Fuse)
+        fused_feat = torch.cat([featB, diff_feat], dim=-1) # (B, HW, 2C)
+        out = self.fusion_layer(fused_feat) # (B, HW, C)
+
+        # Çıktıyı tekrar görüntü boyutuna getirmek isterseniz:
+        # out = out.transpose(1, 2).view(b, c, h, w)
+        
+        # Ama genelde Caption Decoder (LSTM/Transformer) Sequence bekler:
+        return out  # (Batch, Seq_Len, Feature_Dim)
