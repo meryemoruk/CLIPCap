@@ -234,7 +234,7 @@ class ClipLoss(nn.Module):
         return total_loss
 
 class RSCLIPTextEncoder(nn.Module):
-    def __init__(self, model_name="ViT-B/32", checkpoint_path="RemoteCLIP-ViT-B-32.pt", device="cuda"):
+    def __init__(self, model_name="ViT-L/14", checkpoint_path="/content/CLIPCap/RemoteCLIP-ViT-L-14.pt", device="cuda"):
         super().__init__()
         print(f"Loading RemoteCLIP Text Encoder ({model_name})...")
         
