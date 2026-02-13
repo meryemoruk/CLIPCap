@@ -7,6 +7,7 @@ from torch.utils import data
 import argparse
 import json
 import torch.nn.functional as F
+from eval_func.cider.cider import Cider
 import types
 
 from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
@@ -149,18 +150,17 @@ def sample_greedy_wrapper(self, x1, x2, sample_max_len=40):
 
 def get_self_critical_reward(model, sample_seqs, greedy_seqs, gt_tokens, word_vocab):
     """
-    SCST için Reward Hesaplama (CIDEr kullanır).
+    SCST için Optimize Edilmiş Reward Hesaplama (Batch-wise).
+    Döngü yerine Cider Scorer doğrudan kullanılır.
     """
     batch_size = sample_seqs.size(0)
-    res = {}
-    gts = {}
     
     # Index -> Kelime dönüşümü
     vocab_inv = {v: k for k, v in word_vocab.items()}
     
-    # Helper: Tensor -> String List
-    def decode_to_str(seq_tensor):
-        result = []
+    # Helper: Tensor -> String Cümle
+    def decode_to_sentence(seq_tensor):
+        result = {}
         for i in range(seq_tensor.size(0)):
             words = []
             for idx in seq_tensor[i]:
@@ -168,58 +168,38 @@ def get_self_critical_reward(model, sample_seqs, greedy_seqs, gt_tokens, word_vo
                 if w_idx == word_vocab['<END>']: break
                 if w_idx not in [word_vocab['<START>'], word_vocab['<NULL>']]:
                     words.append(vocab_inv.get(w_idx, 'UNK'))
-            result.append(words) # Liste döndür (utils.py formatına uygun olması için)
+            # Cider scorer {index: ['cümle stringi']} formatı bekler
+            result[i] = [" ".join(words)] 
         return result
 
-    # 1. Sampled Captions (Hypothesis)
-    sample_res = decode_to_str(sample_seqs)
-    
-    # 2. Greedy Captions (Baseline)
-    greedy_res = decode_to_str(greedy_seqs)
-    
-    # 3. Ground Truths
-    # gt_tokens list of lists formatında geliyor zaten
-    gt_res = []
-    for i in range(len(gt_tokens)):
-        # <START>, <END>, <NULL> temizle
-        clean_gt = [w for w in gt_tokens[i] if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}]
-        # Token ID -> Word String dönüşümü (Eğer gt_tokens ID ise)
-        # get_eval_score ID listesi kabul ediyorsa stringe çevirmeye gerek yok.
-        # utils.get_eval_score implementation'ına bağlı. Genelde ID listesi kabul eder.
-        gt_res.append([clean_gt]) # Referanslar liste içinde liste ister
+    # Helper: GT List -> String Cümle
+    def decode_gt_to_sentence(gt_tokens_list):
+        result = {}
+        for i, tokens in enumerate(gt_tokens_list):
+            words = [vocab_inv.get(w, 'UNK') for w in tokens if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}]
+            result[i] = [" ".join(words)]
+        return result
 
-    # CIDEr Skorlarını Hesapla
-    # Not: get_eval_score fonksiyonunuzun yapısına göre burası değişebilir.
-    # Genellikle get_eval_score(ref, hypo) şeklinde çalışır.
+    # 1. Verileri Hazırla (String formatına çevir)
+    sample_res = decode_to_sentence(sample_seqs)   # {0: ['a cat sitting'], 1: ...}
+    greedy_res = decode_to_sentence(greedy_seqs)
+    gt_res = decode_gt_to_sentence(gt_tokens)
+
+    # 2. CIDEr Scorer Başlat
+    # (Not: Normalde scorer'ı loop dışında bir kere başlatmak daha iyidir ama burada da çalışır)
+    scorer = Cider()
+
+    # 3. Toplu Skor Hesaplama (Batch Computation)
+    # compute_score fonksiyonu (average_score, scores_array) döner.
+    # scores_array boyutu: (batch_size, )
+    _, scores_sample = scorer.compute_score(gt_res, sample_res)
+    _, scores_greedy = scorer.compute_score(gt_res, greedy_res)
     
-    # Sample için Skor
-    # Her bir örnek için ayrı ayrı skor hesaplamamız lazım ama get_eval_score genelde tüm corpus için çalışır.
-    # SCST için her cümle için ayrı skora ihtiyacımız var. 
-    # Hızlı olması için batch halinde verip array dönmesi gerekir ama standart get_eval_score ortalama döner.
-    # BURADA BASİT BİR FOR LOOP KULLANACAĞIZ (YAVAŞ OLABİLİR AMA GÜVENLİ)
-    
-    rewards = np.zeros(batch_size)
-    baselines = np.zeros(batch_size)
-    
-    for i in range(batch_size):
-        # Tekil hesaplama (CIDEr'ı tercih et)
-        # Eğer utils.py CIDEr scoru tekil döndürmüyorsa tüm metrikleri hesaplar.
+    # 4. Numpy -> Tensor
+    rewards = torch.from_numpy(scores_sample).float().cuda()
+    baselines = torch.from_numpy(scores_greedy).float().cuda()
         
-        # Referanslar (ID listesi)
-        ref = [gt_res[i][0]] # [[1, 4, 5...]]
-        
-        # Sample (ID listesi)
-        hyp_sample = sample_res[i]
-        score_s = get_eval_score([ref], [hyp_sample]) # utils.py fonksiyonu
-        rewards[i] = score_s['CIDEr']
-        
-        # Greedy (ID listesi)
-        hyp_greedy = greedy_res[i]
-        score_g = get_eval_score([ref], [hyp_greedy])
-        baselines[i] = score_g['CIDEr']
-        
-    return torch.from_numpy(rewards).float().cuda(), torch.from_numpy(baselines).float().cuda()
-# ------------------------------------------
+    return rewards, baselines
 
 import matplotlib.pyplot as plt
 
@@ -567,7 +547,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_name', default="LEVIR_CC")
     parser.add_argument('--gpu_id', type=int, default=0)
     parser.add_argument('--checkpoint', default=None, help='Path to pre-trained XE checkpoint (REQUIRED for SCST)')
-    parser.add_argument('--print_freq',type=int, default=10)
+    parser.add_argument('--print_freq',type=int, default=1)
     
     # Training Params
     parser.add_argument('--fine_tune_encoder', type=bool, default=True)    
