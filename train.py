@@ -180,7 +180,7 @@ def main(args):
             batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     elif args.data_name == 'SECOND_CC':
         train_loader = data.DataLoader(
-            SECONDCCDataset(args.data_folder, args.list_path, 'train', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
+            SECONDCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.train_batchsize, shuffle=True, num_workers=args.workers, pin_memory=True)
         val_loader = data.DataLoader(
             SECONDCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
@@ -309,12 +309,9 @@ def main(args):
                 ref_caption = ""
                 for i in pred_seq:
                     pred_caption += (list(word_vocab.keys())[i]) + " "
-                ref_caption = ""
-                for i in range(0,1):
-                    for j in i:
-                        ref_caption += (list(word_vocab.keys())[j]) + " "
-                    ref_caption += ".    "
-
+                for j in hypotheses[0]:
+                    ref_caption += (list(word_vocab.keys())[j]) + " "
+                
                 if ind % args.print_freq == 0:
                     print("Prediction:")
                     print(pred_caption)
