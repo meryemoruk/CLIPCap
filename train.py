@@ -205,8 +205,8 @@ def main(args):
             encoder_trans.train()
             decoder_optimizer.zero_grad()
             encoder_trans_optimizer.zero_grad()
-            if encoder_optimizer is not None:
-                encoder_optimizer.zero_grad()
+            # if encoder_optimizer is not None:
+            #     encoder_optimizer.zero_grad()
 
             # Move to GPU, if available
             imgA = imgA.cuda()
@@ -243,8 +243,8 @@ def main(args):
             # Update weights                      
             decoder_optimizer.step()
             encoder_trans_optimizer.step()
-            if encoder_optimizer is not None:
-                encoder_optimizer.step()
+            # if encoder_optimizer is not None:
+            #     encoder_optimizer.step()
 
             # Keep track of metrics     
             hist[index_i,0] = time.time() - start_time #batch_time        
@@ -349,8 +349,8 @@ def main(args):
         decoder_lr_scheduler.step()
         #print(decoder_optimizer.param_groups[0]['lr'])
         encoder_trans_lr_scheduler.step()
-        if encoder_lr_scheduler is not None:
-            encoder_lr_scheduler.step()
+        # if encoder_lr_scheduler is not None:
+        #     encoder_lr_scheduler.step()
             #print(encoder_optimizer.param_groups[0]['lr'])
         # Check if there was an improvement        
         if  Avg > best_avg:
@@ -373,7 +373,7 @@ def main(args):
                 'encoder_dict': encoder.state_dict(), 
                 'encoder_trans_dict': encoder_trans.state_dict(),   
                 'decoder_dict': decoder.state_dict(),
-                'encoder_optimizer': encoder_optimizer,
+                # 'encoder_optimizer': encoder_optimizer,
                 'encoder_trans_optimizer': encoder_trans_optimizer,
                 'decoder_optimizer': decoder_optimizer
             }                      
@@ -413,7 +413,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', default=None, help='path to checkpoint, None if none.')
     parser.add_argument('--print_freq',type=int, default=50, help='print training/validation stats every __ batches')
     # Training parameters
-    parser.add_argument('--fine_tune_encoder', type=bool, default=True, help='whether fine-tune encoder or not')    
+    parser.add_argument('--fine_tune_encoder', type=bool, default=False, help='whether fine-tune encoder or not')    
     parser.add_argument('--train_batchsize', type=int, default=64, help='batch_size for training')
     parser.add_argument('--network', default='resnet101', help='define the encoder to extract features')
     parser.add_argument('--encoder_dim',default=1024, help='the dimension of extracted features using different network')
