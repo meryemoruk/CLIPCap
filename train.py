@@ -67,7 +67,7 @@ def main(args):
         decoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()),
                                             lr=args.decoder_lr)
     else:
-        checkpoint = torch.load(args.checkpoint, weights_only=False)
+        checkpoint = torch.load(args.checkpoint)
         start_epoch = checkpoint['epoch'] + 1
         best_bleu4 = checkpoint['bleu-4']
         decoder = checkpoint['decoder']

@@ -277,11 +277,11 @@ class RSCLIPTextEncoder(nn.Module):
         return text_features
 
 class ClipEncoder(nn.Module):
-    def __init__(self, path="/content/CLIPCap/RemoteCLIP-ViT-B-32.pt"):
+    def __init__(self, path="/content/CLIPCap/RemoteCLIP-ViT-L-14.pt"):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         try:
-            self.model, preprocess = clip.load("ViT-B/32", device=self.device, jit=False)
+            self.model, preprocess = clip.load("ViT-L/14", device=self.device, jit=False)
         except AttributeError:
             pass 
 
