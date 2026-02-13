@@ -305,16 +305,21 @@ def main(args):
                 hypotheses.append(pred_seq)
                 assert len(references) == len(hypotheses)
 
+                pred_caption = ""
+                ref_caption = ""
+                for i in pred_seq:
+                    pred_caption += (list(word_vocab.keys())[i]) + " "
+                ref_caption = ""
+                for i in range(0,1):
+                    for j in i:
+                        ref_caption += (list(word_vocab.keys())[j]) + " "
+                    ref_caption += ".    "
+
                 if ind % args.print_freq == 0:
-                    pred_caption = ""
-                    ref_caption = ""
-                    for i in pred_seq:
-                        pred_caption += (list(word_vocab.keys())[i]) + " "
-                    ref_caption = ""
-                    for i in img_tokens:
-                        for j in i:
-                            ref_caption += (list(word_vocab.keys())[j]) + " "
-                        ref_caption += ".    "
+                    print("Prediction:")
+                    print(pred_caption)
+                    print("Referance:")
+                    print(ref_caption)
 
                 if ref_caption in nochange_list:
                     nochange_references.append(img_tokens)
