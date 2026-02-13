@@ -538,7 +538,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_name', default="LEVIR_CC")
     parser.add_argument('--gpu_id', type=int, default=0)
     parser.add_argument('--checkpoint', default=None, help='Path to pre-trained XE checkpoint (REQUIRED for SCST)')
-    parser.add_argument('--print_freq',type=int, default=1)
+    parser.add_argument('--print_freq',type=int, default=50)
     
     # Training Params
     parser.add_argument('--fine_tune_encoder', type=bool, default=True)    
