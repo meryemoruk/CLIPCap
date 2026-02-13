@@ -309,7 +309,7 @@ def main(args):
                 ref_caption = ""
                 for i in pred_seq:
                     pred_caption += (list(word_vocab.keys())[i]) + " "
-                for j in references[0]:
+                for j in references[0][0]:
                     ref_caption += (list(word_vocab.keys())[j]) + " "
                 
                 if ind == 0 or ind == 120:
