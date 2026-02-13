@@ -166,7 +166,7 @@ class DecoderTransformer(nn.Module):
         # n_layers = 1
         print("decoder_n_layers=", n_layers)
 
-        decoder_type = 'transformer_decoder'
+        decoder_type = 'gpt'
 
         print("-" * 50)
         print("Decoder Type: " + decoder_type)
