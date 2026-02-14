@@ -124,8 +124,12 @@ def main(args):
     if args.checkpoint is None:      
         encoder = Encoder(args.network)   
         encoder.fine_tune(args.fine_tune_encoder)     
-        encoder_optimizer = torch.optim.Adam(params=encoder.parameters(),
-                                            lr=args.encoder_lr)
+        # 1. Sadece gradyan isteyen (requires_grad=True) parametreleri filtrele
+        trainable_params = filter(lambda p: p.requires_grad, encoder.parameters())
+
+        # 2. Eğer eğitilecek parametre varsa (Adapter gibi), optimizer'ı oluştur.
+        # fine_tune_encoder False olsa bile Adapter eğitilmeli.
+        encoder_optimizer = torch.optim.Adam(params=trainable_params, lr=args.encoder_lr)
         encoder_trans = AttentiveEncoder(n_layers =args.n_layers, feature_size=[args.feat_size, args.feat_size, args.encoder_dim], 
                                             heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout, network=args.network)
         encoder_trans_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()),
@@ -419,7 +423,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', default=None, help='path to checkpoint, None if none.')
     parser.add_argument('--print_freq',type=int, default=50, help='print training/validation stats every __ batches')
     # Training parameters
-    parser.add_argument('--fine_tune_encoder', type=bool, default=False, help='whether fine-tune encoder or not')    
+    parser.add_argument('--fine_tune_encoder', type=bool, default=True, help='whether fine-tune encoder or not')    
     parser.add_argument('--train_batchsize', type=int, default=64, help='batch_size for training')
     parser.add_argument('--network', default='resnet101', help='define the encoder to extract features')
     parser.add_argument('--encoder_dim',default=1024, help='the dimension of extracted features using different network')

@@ -244,6 +244,17 @@ class Encoder(nn.Module):
 
         self.featureCNN = FeatureCNN(1024)
 
+
+        # model_encoder.py -> Encoder sınıfı -> __init__ sonu
+        print("\n--- PARAMETRE DURUM KONTROLÜ ---")
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                print(f"EĞİTİLİYOR (Gradient Var): {name}")
+            else:
+                # Çok fazla çıktı olmaması için frozen olanları yazdırmayabiliriz
+                pass
+        print("--------------------------------\n")
+
     def forward(self, imageA, imageB):
         """
         Forward propagation.
