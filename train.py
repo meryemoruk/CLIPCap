@@ -201,7 +201,7 @@ def main(args):
             #    break
             start_time = time.time()
             decoder.train()  # train mode (dropout and batchnorm is used)
-            encoder.eval()
+            encoder.train()
             encoder_trans.train()
             decoder_optimizer.zero_grad()
             encoder_trans_optimizer.zero_grad()
