@@ -237,8 +237,12 @@ def main(args):
             if args.grad_clip is not None:
                 torch.nn.utils.clip_grad_value_(decoder.parameters(), args.grad_clip)
                 torch.nn.utils.clip_grad_value_(encoder_trans.parameters(), args.grad_clip)
-                if encoder_optimizer is not None:
-                    torch.nn.utils.clip_grad_value_(encoder.parameters(), args.grad_clip)
+                # Filter parameters to only those that have gradients
+                encoder_grads = [p for p in encoder.parameters() if p.grad is not None]
+                # Only clip if there are gradients to clip
+                if encoder_grads:
+                    print("encoder grad clip")
+                    torch.nn.utils.clip_grad_value_(encoder_grads, args.grad_clip)
 
             # Update weights                      
             decoder_optimizer.step()
