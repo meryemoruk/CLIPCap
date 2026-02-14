@@ -81,7 +81,6 @@ class FeatureCNN(nn.Module):
         
         return out
 
-
 class ClipEncoder(nn.Module):
     def __init__(self, path = "/content/CLIPCap/RemoteCLIP-ViT-L-14.pt"):
         super().__init__()
@@ -274,8 +273,8 @@ class Encoder(nn.Module):
             featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
             featB = self.model(imageB)
 
-            featA = self.featureCNN(featA)
-            featB = self.featureCNN(featB)
+            featA = self.featureCNN(featA.float())
+            featB = self.featureCNN(featB.float())
 
             mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
 
