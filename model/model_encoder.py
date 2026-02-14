@@ -284,17 +284,17 @@ class Encoder(nn.Module):
             featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
             featB = self.model(imageB)
 
-            featA_CNN = self.featureCNN(featA.float())
-            featB_CNN = self.featureCNN(featB.float())
-            
-            #residual
-            featA = featA + featA_CNN
-            featB = featB + featB_CNN
+        featA_CNN = self.featureCNN(featA.float())
+        featB_CNN = self.featureCNN(featB.float())
+        
+        #residual
+        featA = featA + featA_CNN
+        featB = featB + featB_CNN
 
-            mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
+        mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
 
-            featA = featA * mask_spatial
-            featB = featB * mask_spatial
+        featA = featA * mask_spatial
+        featB = featB * mask_spatial
 
         # maskedfeat1 = torch.cat([feat1, maskedfeat1], dim=1)
         # maskedfeat2 = torch.cat([feat2, maskedfeat2], dim=1)
