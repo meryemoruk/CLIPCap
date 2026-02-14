@@ -380,6 +380,17 @@ class AttentiveEncoder(nn.Module):
     def __init__(self, n_layers, feature_size, heads, hidden_dim, attention_dim = 512, dropout = 0., network = "resnet101"):
         super(AttentiveEncoder, self).__init__()
         h_feat, w_feat, channels = feature_size
+
+        # --- EKLENECEK KISIM (BAŞLANGIÇ) ---
+        # 0: Before (Önceki Görüntü), 1: After (Sonraki Görüntü)
+        # Channels boyutu feature_size[2] yani 'channels' değişkeninden gelir.
+        self.time_embedding = nn.Embedding(2, channels)
+        
+        # Embedding'i sıfıra yakın başlat ki eğitimi patlatmasın, yavaş yavaş öğrensin
+        self.time_embedding.weight.data.normal_(0, 0.02)
+        # --- EKLENECEK KISIM (BİTİŞ) ---
+
+
         self.network = network
         
         self.h_embedding = nn.Embedding(h_feat, int(channels/2))
@@ -445,6 +456,22 @@ class AttentiveEncoder(nn.Module):
         pos_embedding = pos_embedding.permute(2,0,1).unsqueeze(0).repeat(batch, 1, 1, 1)
         img1 = img1 + pos_embedding
         img2 = img2 + pos_embedding
+
+        # --- EKLENECEK KISIM (BAŞLANGIÇ) ---
+        # Time Embedding Hazırlığı
+        # Tip 0: Önceki Görüntü (Before)
+        # Tip 1: Sonraki Görüntü (After)
+        
+        # (Channels,) boyutunda vektör alırız
+        time_emb_before = self.time_embedding(torch.tensor(0).to(img1.device)) 
+        time_emb_after  = self.time_embedding(torch.tensor(1).to(img1.device))
+        
+        # Boyutları (Batch, Channels, H, W) formatına uydurmak için:
+        # (C) -> (1, C, 1, 1) şeklinde genişletip ekliyoruz (Broadcasting)
+        img1 = img1 + time_emb_before.view(1, c, 1, 1)
+        img2 = img2 + time_emb_after.view(1, c, 1, 1)
+        # --- EKLENECEK KISIM (BİTİŞ) ---
+
         img1 = img1.view(batch, c, -1).transpose(-1, 1)#batch, hw, c
         img2 = img2.view(batch, c, -1).transpose(-1, 1)
         img_sa1, img_sa2 = img1, img2
