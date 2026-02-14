@@ -9,6 +9,9 @@ import torch.nn.functional as F
 # --- maske ---
 from torchvision import transforms
 
+
+
+
 class DinoMaskGenerator(nn.Module):
     def __init__(self, model_type='dinov2_vits14'):
         super().__init__()
@@ -48,6 +51,36 @@ class DinoMaskGenerator(nn.Module):
             mask = mask.view(B, 1, H_grid, H_grid)
             
             return mask
+
+class FeatureCNN(nn.Module):
+    def __init__(self, input_dim):
+        super(FeatureCNN, self).__init__()
+                
+        # Spatial Modeling (ResNet Bloğu benzeri yapı)
+        self.spatial_conv = nn.Sequential(
+            nn.Conv2d(input_dim, input_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(input_dim),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(input_dim, input_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(input_dim),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(input_dim, input_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(input_dim)
+        )
+        
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        # x shape: (Batch, Channels, H, W) -> Örn: (B, 1024, 16, 16)
+            
+        # 2. Residual Connection ile Spatial İşlem
+        identity = x
+        out = self.spatial_conv(x)
+        out += identity  # Skip connection
+        out = self.relu(out)
+        
+        return out
+
 
 class ClipEncoder(nn.Module):
     def __init__(self, path = "/content/CLIPCap/RemoteCLIP-ViT-L-14.pt"):
@@ -210,6 +243,8 @@ class Encoder(nn.Module):
         # --- MASKE ---
         self.dino = DinoMaskGenerator()
 
+        self.featureCNN = FeatureCNN(1024)
+
     def forward(self, imageA, imageB):
         """
         Forward propagation.
@@ -238,6 +273,9 @@ class Encoder(nn.Module):
 
             featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
             featB = self.model(imageB)
+
+            featA = self.featureCNN(featA)
+            featB = self.featureCNN(featB)
 
             mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
 
@@ -430,6 +468,8 @@ class AttentiveEncoder(nn.Module):
 
         return img1, img2
     
+
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):

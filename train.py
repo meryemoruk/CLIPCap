@@ -123,9 +123,9 @@ def main(args):
     # Initialize / load checkpoint
     if args.checkpoint is None:      
         encoder = Encoder(args.network)   
-        # encoder.fine_tune(args.fine_tune_encoder)     
-        # encoder_optimizer = torch.optim.Adam(params=encoder.parameters(),
-        #                                     lr=args.encoder_lr) if args.fine_tune_encoder else None
+        encoder.fine_tune(args.fine_tune_encoder)     
+        encoder_optimizer = torch.optim.Adam(params=encoder.parameters(),
+                                            lr=args.encoder_lr)
         encoder_trans = AttentiveEncoder(n_layers =args.n_layers, feature_size=[args.feat_size, args.feat_size, args.encoder_dim], 
                                             heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout, network=args.network)
         encoder_trans_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()),
@@ -143,7 +143,7 @@ def main(args):
         encoder_trans = checkpoint['encoder_trans']
         encoder_trans_optimizer = checkpoint['encoder_trans_optimizer']
         encoder = checkpoint['encoder']
-        # encoder_optimizer = checkpoint['encoder_optimizer']
+        encoder_optimizer = checkpoint['encoder_optimizer']
         if args.fine_tune_encoder is True and encoder_optimizer is None:
             encoder.fine_tune(args.fine_tune_encoder)
             encoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder.parameters()),
@@ -186,7 +186,7 @@ def main(args):
             SECONDCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
             batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     
-    # encoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=5, gamma=0.5) if args.fine_tune_encoder else None
+    encoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=5, gamma=0.5) if args.fine_tune_encoder else None
     encoder_trans_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_trans_optimizer, step_size=5, gamma=0.5)
     decoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(decoder_optimizer, step_size=5, gamma=0.5)
 
@@ -205,8 +205,8 @@ def main(args):
             encoder_trans.train()
             decoder_optimizer.zero_grad()
             encoder_trans_optimizer.zero_grad()
-            # if encoder_optimizer is not None:
-            #     encoder_optimizer.zero_grad()
+            if encoder_optimizer is not None:
+                encoder_optimizer.zero_grad()
 
             # Move to GPU, if available
             imgA = imgA.cuda()
@@ -243,8 +243,8 @@ def main(args):
             # Update weights                      
             decoder_optimizer.step()
             encoder_trans_optimizer.step()
-            # if encoder_optimizer is not None:
-            #     encoder_optimizer.step()
+            if encoder_optimizer is not None:
+                encoder_optimizer.step()
 
             # Keep track of metrics     
             hist[index_i,0] = time.time() - start_time #batch_time        
@@ -351,8 +351,8 @@ def main(args):
         decoder_lr_scheduler.step()
         #print(decoder_optimizer.param_groups[0]['lr'])
         encoder_trans_lr_scheduler.step()
-        # if encoder_lr_scheduler is not None:
-        #     encoder_lr_scheduler.step()
+        if encoder_lr_scheduler is not None:
+            encoder_lr_scheduler.step()
             #print(encoder_optimizer.param_groups[0]['lr'])
         # Check if there was an improvement        
         if  Avg > best_avg:
@@ -366,7 +366,7 @@ def main(args):
                 .format(best_avg, best_bleu4, best_cider, best_meteor, best_rouge))
             earlyStop = 0
 
-            #save_checkpoint                
+            #save_checkpoint
             print('Save Model')  
             state = {
                 'epoch': epoch,
@@ -375,7 +375,7 @@ def main(args):
                 'encoder_dict': encoder.state_dict(), 
                 'encoder_trans_dict': encoder_trans.state_dict(),   
                 'decoder_dict': decoder.state_dict(),
-                # 'encoder_optimizer': encoder_optimizer,
+                'encoder_optimizer': encoder_optimizer,
                 'encoder_trans_optimizer': encoder_trans_optimizer,
                 'decoder_optimizer': decoder_optimizer
             }                      
