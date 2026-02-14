@@ -273,8 +273,12 @@ class Encoder(nn.Module):
             featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
             featB = self.model(imageB)
 
-            featA = self.featureCNN(featA.float())
-            featB = self.featureCNN(featB.float())
+            featA_CNN = self.featureCNN(featA.float())
+            featB_CNN = self.featureCNN(featB.float())
+            
+            #residual
+            featA = featA + featA_CNN
+            featB = featB + featB_CNN
 
             mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
 
