@@ -236,17 +236,8 @@ class DecoderTransformer(nn.Module):
         :param caption_lengths: a tensor of dimension (batch_size)
         """
 
-        # x_sam = self.cos(x1, x2)
-        # x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) #(batch_size, 2channel, enc_image_size, enc_image_size)
-        # x = self.LN(self.Conv1(x))
-
-        # x1: Before, x2: After
-        diff = x2 - x1  # Fark vektörü (Yön bilgisi içerir: + ise ekleme, - ise çıkarma)
-        
-        # Hepsini birleştir: [Before, After, Difference]
-        x = torch.cat([x1, x2, diff], dim=1) 
-        
-        # Conv1 artık 3x kanalı alıp feature_dim'e düşürecek
+        x_sam = self.cos(x1, x2)
+        x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) #(batch_size, 2channel, enc_image_size, enc_image_size)
         x = self.LN(self.Conv1(x))
 
         batch, channel = x.size(0), x.size(1)
@@ -278,18 +269,10 @@ class DecoderTransformer(nn.Module):
         :param x1, x2: encoded images, a tensor of dimension (batch_size, channel, enc_image_size, enc_image_size)
         """
         
-        # x_sam = self.cos(x1, x2)
-        # x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) #(batch_size, 2channel, enc_image_size, enc_image_size)
-        # x = self.LN(self.Conv1(x))
-        
-        # x1: Before, x2: After
-        diff = x2 - x1  # Fark vektörü (Yön bilgisi içerir: + ise ekleme, - ise çıkarma)
-        
-        # Hepsini birleştir: [Before, After, Difference]
-        x = torch.cat([x1, x2, diff], dim=1) 
-        
-        # Conv1 artık 3x kanalı alıp feature_dim'e düşürecek
+        x_sam = self.cos(x1, x2)
+        x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) #(batch_size, 2channel, enc_image_size, enc_image_size)
         x = self.LN(self.Conv1(x))
+
         
         batch, channel = x.size(0), x.size(1)
         x = x.view(batch, channel, -1).permute(2, 0, 1)#(hw, batch_size, feature_dim)
@@ -331,16 +314,8 @@ class DecoderTransformer(nn.Module):
         """
         Düzeltilmiş Beam Search - Boyut Hatası Giderildi
         """
-        # x = torch.cat([x1, x2], dim=1)
-        # x = self.LN(self.Conv1(x))
-
-        # x1: Before, x2: After
-        diff = x2 - x1  # Fark vektörü (Yön bilgisi içerir: + ise ekleme, - ise çıkarma)
-        
-        # Hepsini birleştir: [Before, After, Difference]
-        x = torch.cat([x1, x2, diff], dim=1) 
-        
-        # Conv1 artık 3x kanalı alıp feature_dim'e düşürecek
+        x_sam = self.cos(x1, x2)
+        x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) #(batch_size, 2channel, enc_image_size, enc_image_size)
         x = self.LN(self.Conv1(x))
 
         batch, channel, h, w = x.shape
