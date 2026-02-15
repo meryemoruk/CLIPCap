@@ -13,7 +13,7 @@ from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
 from data.SECOND_CC.SECONDCC import SECONDCCDataset
 from data.Dubai_CC.DubaiCC import DubaiCCDataset
 from model.model_encoder import Encoder, AttentiveEncoder
-from model.model_decoder import DecoderTransformer
+from model.model_decoder import DecoderTransformer_scst
 from utils import *
 
 def count_parameters(model, model_name):
@@ -136,7 +136,7 @@ def main(args):
     
     encoder_trans_optimizer = torch.optim.AdamW(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()),
                                         lr=args.encoder_lr, weight_decay=1e-4)
-    decoder = DecoderTransformer(encoder_dim=args.encoder_dim, feature_dim=args.feature_dim, vocab_size=len(word_vocab), max_lengths=args.max_length, word_vocab=word_vocab, n_head=args.n_heads,
+    decoder = DecoderTransformer_scst(encoder_dim=args.encoder_dim, feature_dim=args.feature_dim, vocab_size=len(word_vocab), max_lengths=args.max_length, word_vocab=word_vocab, n_head=args.n_heads,
                                 n_layers= args.decoder_n_layers, dropout=args.dropout)
     
     decoder_optimizer = torch.optim.AdamW(params=filter(lambda p: p.requires_grad, decoder.parameters()), 
