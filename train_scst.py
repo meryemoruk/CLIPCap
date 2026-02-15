@@ -13,7 +13,7 @@ from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
 from data.SECOND_CC.SECONDCC import SECONDCCDataset
 from data.Dubai_CC.DubaiCC import DubaiCCDataset
 from model.model_encoder import Encoder, AttentiveEncoder
-from model.model_decoder import DecoderTransformer_scst
+from model.model_decoder import DecoderTransformer
 from utils import *
 
 def count_parameters(model, model_name):
@@ -22,121 +22,8 @@ def count_parameters(model, model_name):
     print(f"{model_name}: {total_params:,} toplam parametre | {trainable_params:,} eğitilebilir parametre")
     return trainable_params
 
-def sample_scst_wrapper(self, x1, x2, sample_max_len=40):
-    """
-    SCST Sampling Metodu (Düzeltilmiş - In-place hatası giderildi).
-    Her adımda 'tgt' tensörünü cat ile birleştirerek autograd zincirini korur.
-    """
-    # 1. Feature Hazırlığı
-    x_sam = self.cos(x1, x2)
-    x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) 
-    x = self.LN(self.Conv1(x))
-
-    batch, channel = x.size(0), x.size(1)
-    x = x.view(batch, channel, -1).permute(2, 0, 1) # (hw, batch, feature_dim)
-
-    # 2. Hazırlık
-    device = x.device
-    
-    # DÜZELTME: tgt'yi zeros ile başlatıp doldurmak yerine, sadece START token ile başlatıyoruz.
-    curr_tgt = torch.full((batch, 1), self.word_vocab['<START>'], dtype=torch.long).to(device)
-    
-    seqs = []
-    log_probs = []
-    
-    # Maske (Triangular)
-    mask = torch.triu(torch.ones(sample_max_len, sample_max_len) * float('-inf'), diagonal=1).to(device)
-    
-    # Loop
-    for step in range(sample_max_len - 1):
-        # Padding mask
-        tgt_pad_mask = (curr_tgt == self.word_vocab['<NULL>'])
-        
-        # Embedding
-        word_emb = self.vocab_embedding(curr_tgt) # (Batch, Len, Dim)
-        word_emb = word_emb.transpose(1, 0) # (Len, Batch, Dim)
-        word_emb = self.position_encoding(word_emb)
-        
-        # Transformer Forward
-        curr_mask = mask[:step+1, :step+1]
-        
-        pred = self.transformer(word_emb, x, tgt_mask=curr_mask, tgt_key_padding_mask=tgt_pad_mask)
-        
-        # Son tokenin çıktısını al
-        last_output = pred[-1, :, :] # (Batch, Dim)
-        last_output = self.dropout(last_output)
-        
-        # Logits
-        logits = self.wdc(last_output) # (Batch, Vocab)
-        
-        # --- MULTINOMIAL SAMPLING ---
-        probs = F.softmax(logits, dim=-1)
-        token = probs.multinomial(1) # (Batch, 1) -> Boyut korunsun diye squeeze yapmıyoruz hemen
-        
-        # Log Prob'u kaydet (Gradient için gerekli)
-        log_prob = F.log_softmax(logits, dim=-1)
-        token_log_prob = log_prob.gather(1, token).squeeze(1) # (Batch,)
-        
-        token_squeezed = token.squeeze(1)
-        
-        # Kaydet
-        seqs.append(token_squeezed)
-        log_probs.append(token_log_prob)
-        
-        # DÜZELTME: In-place assignment yerine Concatenation kullanıyoruz.
-        # Bu işlem yeni bir tensör yaratır, böylece eski 'curr_tgt' graph'ta bozulmadan kalır.
-        curr_tgt = torch.cat([curr_tgt, token], dim=1)
-
-    # Listeleri Tensor yap
-    seqs = torch.stack(seqs, dim=1) # (Batch, Len)
-    log_probs = torch.stack(log_probs, dim=1) # (Batch, Len)
-    
-    return seqs, log_probs
-
-def sample_greedy_wrapper(self, x1, x2, sample_max_len=40):
-    """
-    SCST Baseline için Batch Uyumlu Greedy Sampling.
-    Orijinal decoder.sample fonksiyonu batch > 1 iken hata verdiği için bu kullanılır.
-    """
-    # 1. Feature Hazırlığı
-    x_sam = self.cos(x1, x2)
-    x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) 
-    x = self.LN(self.Conv1(x))
-
-    batch, channel = x.size(0), x.size(1)
-    x = x.view(batch, channel, -1).permute(2, 0, 1)
-
-    # 2. Hazırlık
-    device = x.device
-    tgt = torch.zeros(batch, sample_max_len).to(torch.int64).to(device)
-    tgt[:, 0] = self.word_vocab['<START>']
-    
-    seqs = []
-    
-    # Maske
-    mask = torch.triu(torch.ones(sample_max_len, sample_max_len) * float('-inf'), diagonal=1).to(device)
-    
-    for step in range(sample_max_len - 1):
-        curr_tgt = tgt[:, :step+1]
-        tgt_pad_mask = (curr_tgt == self.word_vocab['<NULL>'])
-        
-        word_emb = self.vocab_embedding(curr_tgt).transpose(1, 0)
-        word_emb = self.position_encoding(word_emb)
-        
-        curr_mask = mask[:step+1, :step+1]
-        pred = self.transformer(word_emb, x, tgt_mask=curr_mask, tgt_key_padding_mask=tgt_pad_mask)
-        
-        last_output = pred[-1, :, :]
-        logits = self.wdc(last_output)
-        
-        # --- GREEDY SEÇİM (ARGMAX) ---
-        token = logits.argmax(dim=-1) # En yüksek olasılıklı kelimeyi seç
-        
-        seqs.append(token)
-        tgt[:, step+1] = token
-
-    seqs = torch.stack(seqs, dim=1) # (Batch, Len)
-    return seqs
+# --- NOT: Wrapper fonksiyonları (sample_scst_wrapper, sample_greedy_wrapper) SİLİNDİ ---
+# Çünkü artık DecoderTransformer sınıfının içinde yer alıyorlar.
 
 def get_self_critical_reward(model, sample_seqs, greedy_seqs, gt_tokens, word_vocab):
     """
@@ -169,42 +56,25 @@ def get_self_critical_reward(model, sample_seqs, greedy_seqs, gt_tokens, word_vo
     greedy_res = decode_to_str(greedy_seqs)
     
     # 3. Ground Truths
-    # gt_tokens list of lists formatında geliyor zaten
     gt_res = []
     for i in range(len(gt_tokens)):
         # <START>, <END>, <NULL> temizle
         clean_gt = [w for w in gt_tokens[i] if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}]
-        # Token ID -> Word String dönüşümü (Eğer gt_tokens ID ise)
-        # get_eval_score ID listesi kabul ediyorsa stringe çevirmeye gerek yok.
-        # utils.get_eval_score implementation'ına bağlı. Genelde ID listesi kabul eder.
-        gt_res.append([clean_gt]) # Referanslar liste içinde liste ister
+        gt_res.append([clean_gt]) 
 
-    # CIDEr Skorlarını Hesapla
-    # Not: get_eval_score fonksiyonunuzun yapısına göre burası değişebilir.
-    # Genellikle get_eval_score(ref, hypo) şeklinde çalışır.
-    
-    # Sample için Skor
-    # Her bir örnek için ayrı ayrı skor hesaplamamız lazım ama get_eval_score genelde tüm corpus için çalışır.
-    # SCST için her cümle için ayrı skora ihtiyacımız var. 
-    # Hızlı olması için batch halinde verip array dönmesi gerekir ama standart get_eval_score ortalama döner.
-    # BURADA BASİT BİR FOR LOOP KULLANACAĞIZ (YAVAŞ OLABİLİR AMA GÜVENLİ)
-    
     rewards = np.zeros(batch_size)
     baselines = np.zeros(batch_size)
     
     for i in range(batch_size):
-        # Tekil hesaplama (CIDEr'ı tercih et)
-        # Eğer utils.py CIDEr scoru tekil döndürmüyorsa tüm metrikleri hesaplar.
+        # Tekil hesaplama
+        ref = [gt_res[i][0]] 
         
-        # Referanslar (ID listesi)
-        ref = [gt_res[i][0]] # [[1, 4, 5...]]
-        
-        # Sample (ID listesi)
+        # Sample
         hyp_sample = sample_res[i]
-        score_s = get_eval_score([ref], [hyp_sample]) # utils.py fonksiyonu
+        score_s = get_eval_score([ref], [hyp_sample])
         rewards[i] = score_s['CIDEr']
         
-        # Greedy (ID listesi)
+        # Greedy
         hyp_greedy = greedy_res[i]
         score_g = get_eval_score([ref], [hyp_greedy])
         baselines[i] = score_g['CIDEr']
@@ -258,22 +128,17 @@ def main(args):
           
     encoder = Encoder(args.network)   
     encoder.fine_tune(args.fine_tune_encoder)     
-    # 1. Sadece gradyan isteyen (requires_grad=True) parametreleri filtrele
     trainable_params = filter(lambda p: p.requires_grad, encoder.parameters())
 
-    # 2. Eğer eğitilecek parametre varsa (Adapter gibi), optimizer'ı oluştur.
-    # fine_tune_encoder False olsa bile Adapter eğitilmeli.
     encoder_optimizer = torch.optim.Adam(params=trainable_params, lr=args.encoder_lr)
     encoder_trans = AttentiveEncoder(n_layers =args.n_layers, feature_size=[args.feat_size, args.feat_size, args.encoder_dim], 
                                         heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout, network=args.network)
-    # encoder_trans_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()),
-    #                                     lr=args.encoder_lr)
+    
     encoder_trans_optimizer = torch.optim.AdamW(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()),
                                         lr=args.encoder_lr, weight_decay=1e-4)
-    decoder = DecoderTransformer_scst(encoder_dim=args.encoder_dim, feature_dim=args.feature_dim, vocab_size=len(word_vocab), max_lengths=args.max_length, word_vocab=word_vocab, n_head=args.n_heads,
+    decoder = DecoderTransformer(encoder_dim=args.encoder_dim, feature_dim=args.feature_dim, vocab_size=len(word_vocab), max_lengths=args.max_length, word_vocab=word_vocab, n_head=args.n_heads,
                                 n_layers= args.decoder_n_layers, dropout=args.dropout)
-    # decoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()),
-    #                                     lr=args.decoder_lr)
+    
     decoder_optimizer = torch.optim.AdamW(params=filter(lambda p: p.requires_grad, decoder.parameters()), 
                                             lr=args.decoder_lr, weight_decay=1e-4)
    
@@ -288,15 +153,10 @@ def main(args):
         encoder_trans.load_state_dict(checkpoint['encoder_trans_dict'])
         encoder.load_state_dict(checkpoint['encoder_dict'])
         
-        # Optimizer state'lerini yükle (Eğer checkpoint'te varsa)
-        # Not: Optimizerlar state_dict olarak kaydedilmemiş olabilir, 
-        # train.py'da doğrudan obje olarak kaydedilmiş görünüyor ama state_dict tercih edilir.
-        # Eğer hata alırsanız optimizer yüklemeyi atlayıp sıfırdan başlatabilirsiniz.
         if 'decoder_optimizer' in checkpoint:
             try:
                 decoder_optimizer.load_state_dict(checkpoint['decoder_optimizer'].state_dict())
             except AttributeError:
-                # Eğer optimizer tüm obje olarak kaydedildiyse:
                 decoder_optimizer = checkpoint['decoder_optimizer']
 
         if 'encoder_trans_optimizer' in checkpoint:
@@ -314,11 +174,9 @@ def main(args):
             encoder.fine_tune(args.fine_tune_encoder)
             encoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder.parameters()), lr=args.encoder_lr)
 
-    # --- MONKEY PATCHING ---
-    # Decoder'a sample_scst_wrapper metodunu ekliyoruz
-    decoder.sample_scst = types.MethodType(sample_scst_wrapper, decoder)
-    decoder.sample_greedy = types.MethodType(sample_greedy_wrapper, decoder) #
-    # -----------------------
+    # --- MONKEY PATCHING SİLİNDİ ---
+    # decoder.sample_scst ve decoder.sample_greedy artık sınıfın kendi metodlarıdır.
+    # -------------------------------
 
     # Move to GPU
     encoder = encoder.cuda()
@@ -347,9 +205,7 @@ def main(args):
     
     # Schedulers
     encoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=8, gamma=0.5) if args.fine_tune_encoder else None
-    # encoder_trans_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_trans_optimizer, step_size=5, gamma=0.5)
     encoder_trans_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(encoder_trans_optimizer, T_max=args.num_epochs, eta_min=1e-6)
-    # decoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(decoder_optimizer, step_size=8, gamma=0.5)
     decoder_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(decoder_optimizer, T_max=args.num_epochs, eta_min=1e-6)
     
     l_resize = torch.nn.Upsample(size = (256, 256), mode ='bilinear', align_corners = True)
@@ -371,7 +227,6 @@ def main(args):
             start_time = time.time()
             
             # Mod ayarları
-            # SCST için de train modunda kalmalı (Dropout vb. için)
             decoder.train()
             encoder.eval() 
             encoder_trans.train()
@@ -406,34 +261,27 @@ def main(args):
             else:
                 # --- SCST LOSS (RL Eğitim) ---
                 
-                # 1. Greedy Search (Baseline) - Gradientsiz
-                with torch.no_grad():
-                    # Yeni yazdığımız batch uyumlu fonksiyonu kullanıyoruz
-                    greedy_seqs = decoder.sample_greedy(feat1, feat2, sample_max_len=args.max_length)
+                # 1. Greedy Search (Baseline)
+                # Modelin kendi metodunu çağırıyoruz
+                greedy_seqs = decoder.sample_greedy(feat1, feat2, sample_max_len=args.max_length)
 
-                # 2. Monte-Carlo Sampling (Policy) - Gradientli
-                # Yeni eklenen sample_scst fonksiyonunu kullanıyoruz
+                # 2. Monte-Carlo Sampling (Policy)
+                # Modelin kendi metodunu çağırıyoruz
                 sample_seqs, sample_log_probs = decoder.sample_scst(feat1, feat2, sample_max_len=args.max_length)
                 
                 # 3. Reward Hesaplama
-                # token.tolist() ground truth referanslarıdır
                 rewards, baselines = get_self_critical_reward(decoder, sample_seqs, greedy_seqs, token.tolist(), word_vocab)
                 
                 # 4. Loss Hesaplama
-                # loss = - (reward - baseline) * log_prob
-                # log_prob shape: (Batch, Len)
-                # reward shape: (Batch,) -> (Batch, 1) yapmalıyız
-                
                 advantage = rewards - baselines
                 
-                # Maskeleme: <END> token sonrası veya padding için log_prob'ları 0 yapmalıyız
-                # Basitçe sample_seqs üzerinden maske oluşturabiliriz
+                # Maskeleme
                 pad_mask = (sample_seqs != word_vocab['<NULL>']).float()
                 
                 # Ortalama loss
                 loss = - (advantage.unsqueeze(1) * sample_log_probs * pad_mask).sum() / args.train_batchsize
                 
-                acc = 0 # SCST'de accuracy anlamsızdır, reward takip edilir
+                acc = 0
 
             # Back prop
             loss.backward()
@@ -550,14 +398,14 @@ if __name__ == '__main__':
     
     # Training Params
     parser.add_argument('--fine_tune_encoder', type=bool, default=True)    
-    parser.add_argument('--train_batchsize', type=int, default=32) # SCST'de batch size önemli
+    parser.add_argument('--train_batchsize', type=int, default=32) 
     parser.add_argument('--network', default='resnet101')
     parser.add_argument('--encoder_dim',default=1024)
     parser.add_argument('--feat_size', default=16)
     parser.add_argument('--num_epochs', type=int, default=50)
     parser.add_argument('--workers', type=int, default=4)
     
-    # LR ayarları (SCST için daha düşük LR önerilir)
+    # LR ayarları
     parser.add_argument('--encoder_lr', type=float, default=1e-5)
     parser.add_argument('--decoder_lr', type=float, default=5e-5)
     
@@ -577,7 +425,7 @@ if __name__ == '__main__':
     
     # --- SCST PARAMETRELERİ ---
     parser.add_argument('--scst_start_epoch', type=int, default=0, 
-                        help='SCST kaybının başlayacağı epoch. Eğer pre-trained model yüklüyorsanız 0 yapın, sıfırdan eğitiyorsanız 20+ yapın.')
+                        help='SCST kaybının başlayacağı epoch.')
 
     args = parser.parse_args()
     main(args)
