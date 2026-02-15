@@ -68,15 +68,15 @@ def get_self_critical_reward(model, sample_seqs, greedy_seqs, gt_tokens, word_vo
     
     for i in range(batch_size):
         # Tekil hesaplama
-        ref = [gt_res[i][0]] 
-        
+        ref = [gt_res[i][0]]
+
         # Sample
         hyp_sample = sample_res[i]
-        rewards[i] = Cider([ref], [hyp_sample])
+        rewards[i] = Cider.compute_score(ref, hyp_sample)
         
         # Greedy
         hyp_greedy = greedy_res[i]
-        baselines[i] = Cider([ref], [hyp_greedy])
+        baselines[i] = Cider.compute_score(ref, hyp_greedy)
         
     return torch.from_numpy(rewards).float().cuda(), torch.from_numpy(baselines).float().cuda()
 # ------------------------------------------
