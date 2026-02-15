@@ -7,7 +7,8 @@ from torch.utils import data
 import argparse
 import json
 import torch.nn.functional as F
-import types
+from eval_func.cider.cider import Cider
+
 
 from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
 from data.SECOND_CC.SECONDCC import SECONDCCDataset
@@ -71,13 +72,11 @@ def get_self_critical_reward(model, sample_seqs, greedy_seqs, gt_tokens, word_vo
         
         # Sample
         hyp_sample = sample_res[i]
-        score_s = get_eval_score([ref], [hyp_sample])
-        rewards[i] = score_s['CIDEr']
+        rewards[i] = Cider([ref], [hyp_sample])
         
         # Greedy
         hyp_greedy = greedy_res[i]
-        score_g = get_eval_score([ref], [hyp_greedy])
-        baselines[i] = score_g['CIDEr']
+        baselines[i] = Cider([ref], [hyp_greedy])
         
     return torch.from_numpy(rewards).float().cuda(), torch.from_numpy(baselines).float().cuda()
 # ------------------------------------------
