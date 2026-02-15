@@ -487,9 +487,21 @@ class AttentiveEncoder(nn.Module):
         img2 = img2.view(batch, c, -1).transpose(-1, 1)
         img_sa1, img_sa2 = img1, img2
 
-        for (l, m) in self.selftrans:           
+        diffAB = img2 - img1
+        diffBA = img2 - img1
+
+        mask_spatial = F.interpolate(mask, size=diffAB.shape[2:], mode='bicubic')
+
+        diffBA = mask_spatial * diffBA
+        diffAB = mask_spatial * diffAB
+
+        for (l, m) in self.selftrans:      
             img_sa1 = l(img_sa1, img_sa1, img_sa1) + img_sa1
             img_sa2 = l(img_sa2, img_sa2, img_sa2) + img_sa2
+
+            diffAB = l(diffAB, diffAB, diffAB) + diffAB
+            diffBA = l(diffBA, diffBA, diffBA) + diffBA
+
             # img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
             # img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
             # mask_product = mask.view(batch, 49, 1)
@@ -499,8 +511,8 @@ class AttentiveEncoder(nn.Module):
             img = torch.cat([img_sa1, img_sa2], dim = -1)
             # mask_double = torch.cat([mask], dim = -1)
             img = m(img, img, img)
-            img_sa1 = img[:,:,:c] + img1 #+ img_ca1
-            img_sa2 = img[:,:,c:] + img2 #+ img_ca2
+            img_sa1 = img[:,:,:c] + img + diffBA #+ img_ca1
+            img_sa2 = img[:,:,c:] + img2 + diffAB #+ img_ca2
             # img_sa1 = self.last_norm1(img_sa1)
             # img_sa2 = self.last_norm2(img_sa2)
 
