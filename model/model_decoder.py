@@ -199,7 +199,7 @@ class DecoderTransformer(nn.Module):
         self.max_lengths = max_lengths
         self.word_vocab = word_vocab
         self.dropout = dropout
-        self.Conv1 = nn.Conv2d(encoder_dim*3, feature_dim, kernel_size = 1)
+        self.Conv1 = nn.Conv2d(encoder_dim*2, feature_dim, kernel_size = 1)
         self.LN = resblock(feature_dim, feature_dim)
         # embedding layer
         self.vocab_embedding = nn.Embedding(vocab_size, self.embed_dim)  # vocaburaly embedding
