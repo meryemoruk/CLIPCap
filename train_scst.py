@@ -185,6 +185,17 @@ def main(args):
     
     criterion_ce = torch.nn.CrossEntropyLoss().cuda()
 
+    def move_optimizer_to_gpu(optimizer):
+        if optimizer is not None:
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.cuda()
+
+    move_optimizer_to_gpu(decoder_optimizer)
+    move_optimizer_to_gpu(encoder_trans_optimizer)
+    move_optimizer_to_gpu(encoder_optimizer)
+
     # Parametre sayımı
     count_parameters(encoder, "Encoder")
     count_parameters(encoder_trans, "AttentiveEncoder")
