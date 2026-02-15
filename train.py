@@ -9,7 +9,6 @@ import json
 #import torchvision.transforms as transforms
 from data.LEVIR_CC.LEVIRCC import LEVIRCCDataset
 from data.SECOND_CC.SECONDCC import SECONDCCDataset
-from data.Dubai_CC.DubaiCC import DubaiCCDataset
 from model.model_encoder import Encoder, AttentiveEncoder
 from model.model_decoder import DecoderTransformer
 from utils import *

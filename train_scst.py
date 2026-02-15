@@ -258,15 +258,24 @@ def main(args):
           
     encoder = Encoder(args.network)   
     encoder.fine_tune(args.fine_tune_encoder)     
-    encoder_optimizer = torch.optim.Adam(params=encoder.parameters(), lr=args.encoder_lr) if args.fine_tune_encoder else None
-    
+    # 1. Sadece gradyan isteyen (requires_grad=True) parametreleri filtrele
+    trainable_params = filter(lambda p: p.requires_grad, encoder.parameters())
+
+    # 2. Eğer eğitilecek parametre varsa (Adapter gibi), optimizer'ı oluştur.
+    # fine_tune_encoder False olsa bile Adapter eğitilmeli.
+    encoder_optimizer = torch.optim.Adam(params=trainable_params, lr=args.encoder_lr)
     encoder_trans = AttentiveEncoder(n_layers =args.n_layers, feature_size=[args.feat_size, args.feat_size, args.encoder_dim], 
                                         heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout, network=args.network)
-    encoder_trans_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()), lr=args.encoder_lr)
-    
+    # encoder_trans_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()),
+    #                                     lr=args.encoder_lr)
+    encoder_trans_optimizer = torch.optim.AdamW(params=filter(lambda p: p.requires_grad, encoder_trans.parameters()),
+                                        lr=args.encoder_lr, weight_decay=1e-4)
     decoder = DecoderTransformer(encoder_dim=args.encoder_dim, feature_dim=args.feature_dim, vocab_size=len(word_vocab), max_lengths=args.max_length, word_vocab=word_vocab, n_head=args.n_heads,
                                 n_layers= args.decoder_n_layers, dropout=args.dropout)
-    decoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()), lr=args.decoder_lr)
+    # decoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()),
+    #                                     lr=args.decoder_lr)
+    decoder_optimizer = torch.optim.AdamW(params=filter(lambda p: p.requires_grad, decoder.parameters()), 
+                                            lr=args.decoder_lr, weight_decay=1e-4)
    
     if args.checkpoint is not None:
         print(f"Checkpoint yükleniyor: {args.checkpoint}")
@@ -337,9 +346,11 @@ def main(args):
         batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     
     # Schedulers
-    encoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=5, gamma=0.5) if args.fine_tune_encoder else None
-    encoder_trans_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_trans_optimizer, step_size=5, gamma=0.5)
-    decoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(decoder_optimizer, step_size=5, gamma=0.5)
+    encoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=8, gamma=0.5) if args.fine_tune_encoder else None
+    # encoder_trans_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_trans_optimizer, step_size=5, gamma=0.5)
+    encoder_trans_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(encoder_trans_optimizer, T_max=args.num_epochs, eta_min=1e-6)
+    # decoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(decoder_optimizer, step_size=8, gamma=0.5)
+    decoder_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(decoder_optimizer, T_max=args.num_epochs, eta_min=1e-6)
     
     l_resize = torch.nn.Upsample(size = (256, 256), mode ='bilinear', align_corners = True)
     
