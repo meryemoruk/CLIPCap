@@ -490,7 +490,7 @@ class AttentiveEncoder(nn.Module):
         diffAB = img2 - img1
         diffBA = img2 - img1
         
-        mask_spatial = F.interpolate(mask, size=diffAB.shape[2:], mode='bicubic')
+        mask_spatial = F.interpolate(mask, size=(h, w), mode='bicubic', align_corners=False)
         mask_flat = mask_spatial.flatten(2).transpose(1, 2)
 
         diffBA = mask_flat * diffBA
