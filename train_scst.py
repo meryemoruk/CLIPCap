@@ -25,60 +25,66 @@ def count_parameters(model, model_name):
 
 # --- NOT: Wrapper fonksiyonları (sample_scst_wrapper, sample_greedy_wrapper) SİLİNDİ ---
 # Çünkü artık DecoderTransformer sınıfının içinde yer alıyorlar.
+import torch
 
-def get_self_critical_reward(model, sample_seqs, greedy_seqs, gt_tokens, word_vocab):
+def get_self_critical_reward(sample_seqs, greedy_seqs, gt_tokens, word_vocab):
     """
-    SCST için Reward Hesaplama (CIDEr kullanır).
+    SCST için Batch-wise Reward Hesaplama.
+    Döngü yerine tüm batch tek seferde hesaplanır.
     """
     batch_size = sample_seqs.size(0)
-    res = {}
-    gts = {}
     
-    # Index -> Kelime dönüşümü
+    # Kelime ID -> String dönüşümü için sözlük
+    # <UNK> key hatası vermemesi için get kullanılır
     vocab_inv = {v: k for k, v in word_vocab.items()}
-    
-    # Helper: Tensor -> String List
-    def decode_to_str(seq_tensor):
-        result = []
+
+    def decode_batch(seq_tensor):
+        """Tensor batch'ini string listesine çevirir."""
+        res = []
         for i in range(seq_tensor.size(0)):
             words = []
             for idx in seq_tensor[i]:
                 w_idx = idx.item()
-                if w_idx == word_vocab['<END>']: break
-                if w_idx not in [word_vocab['<START>'], word_vocab['<NULL>']]:
+                # <END> gelirse cümleyi bitir
+                if w_idx == word_vocab['<END>']:
+                    break
+                # Özel tokenleri atla
+                if w_idx not in {word_vocab['<START>'], word_vocab['<NULL>']}:
                     words.append(vocab_inv.get(w_idx, 'UNK'))
-            result.append(words) # Liste döndür (utils.py formatına uygun olması için)
-        return result
+            
+            # CIDEr scorer genelde boşlukla birleşmiş string bekler
+            res.append(' '.join(words))
+        return res
 
-    # 1. Sampled Captions (Hypothesis)
-    sample_res = decode_to_str(sample_seqs)
+    # 1. Decode İşlemleri (ID -> String)
+    sample_res_list = decode_batch(sample_seqs)
+    greedy_res_list = decode_batch(greedy_seqs)
     
-    # 2. Greedy Captions (Baseline)
-    greedy_res = decode_to_str(greedy_seqs)
-    
-    # 3. Ground Truths
-    gt_res = []
-    for i in range(len(gt_tokens)):
-        # <START>, <END>, <NULL> temizle
-        clean_gt = [w for w in gt_tokens[i] if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}]
-        gt_res.append([clean_gt]) 
+    # Ground Truth Decode (gt_tokens bir Tensor ise)
+    gt_res_list = decode_batch(gt_tokens)
 
-    rewards = np.zeros(batch_size)
-    baselines = np.zeros(batch_size)
+    # 2. Scorer İçin Veri Formatlama
+    # eval_func/cider/cider.py genelde şu formatı bekler:
+    # gts = {id: [ref1, ref2...]} 
+    # res = [{image_id: id, caption: cap}] veya {id: [cap]} (Versiyona göre değişir, genelde dict çalışır)
     
-    for i in range(batch_size):
-        # Tekil hesaplama
-        ref = [gt_res[i][0]]
+    gts = {i: [gt_res_list[i]] for i in range(batch_size)}
+    res_sample = {i: [sample_res_list[i]] for i in range(batch_size)}
+    res_greedy = {i: [greedy_res_list[i]] for i in range(batch_size)}
 
-        # Sample
-        hyp_sample = sample_res[i]
-        rewards[i] = Cider().compute_score(gts=[ref], res=[hyp_sample])
-        
-        # Greedy
-        hyp_greedy = greedy_res[i]
-        baselines[i] = Cider().compute_score(gts=[ref], res=[hyp_greedy])
-        
-    return torch.from_numpy(rewards).float().cuda(), torch.from_numpy(baselines).float().cuda()
+    # 3. CIDEr Hesaplama (Tek Seferde)
+    # Cider().compute_score() genelde (avg_score, scores_array) döner.
+    scorer = Cider()
+    
+    _, sample_scores = scorer.compute_score(gts, res_sample)
+    _, greedy_scores = scorer.compute_score(gts, res_greedy)
+
+    # 4. Numpy -> Tensor
+    # sample_scores bir numpy array'dir (Batch_Size,)
+    rewards = torch.from_numpy(sample_scores).float().cuda()
+    baselines = torch.from_numpy(greedy_scores).float().cuda()
+    
+    return rewards, baselines
 # ------------------------------------------
 
 import matplotlib.pyplot as plt
