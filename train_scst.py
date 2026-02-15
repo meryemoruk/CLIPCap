@@ -286,7 +286,7 @@ def main(args):
                 sample_seqs, sample_log_probs = decoder.sample_scst(feat1, feat2, sample_max_len=args.max_length)
                 
                 # 3. Reward Hesaplama
-                rewards, baselines = get_self_critical_reward(decoder, sample_seqs, greedy_seqs, token.tolist(), word_vocab)
+                rewards, baselines = get_self_critical_reward(sample_seqs, greedy_seqs, token.tolist(), word_vocab)
                 
                 # 4. Loss Hesaplama
                 advantage = rewards - baselines
