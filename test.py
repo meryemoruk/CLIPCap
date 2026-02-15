@@ -34,7 +34,7 @@ def main(args):
     # Load checkpoint
 
     snapshot_full_path = os.path.join(args.savepath, args.checkpoint)
-    checkpoint = torch.load(snapshot_full_path, weights_only=True)
+    checkpoint = torch.load(snapshot_full_path, weights_only=False)
     encoder = Encoder(args.network)
     encoder_trans = AttentiveEncoder(n_layers =args.n_layers, feature_size=[args.feat_size, args.feat_size, args.encoder_dim], 
                     heads=args.n_heads, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, dropout=args.dropout, network=args.network)
