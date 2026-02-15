@@ -415,13 +415,12 @@ class DecoderTransformer(nn.Module):
         
         return seq
     
-
-
 # Gerekli importlar (resblock, Mesh_TransformerDecoderLayer vb. kodun geri kalanında tanımlı varsayılmıştır)
+
 class DecoderTransformer_scst(nn.Module):
     """
     Decoder with Transformer.
-    SCST (Self-Critical Sequence Training) metodları entegre edilmiştir.
+    SCST methods (sample_scst, sample_greedy) integrated.
     """
 
     def __init__(self, encoder_dim, feature_dim, vocab_size, max_lengths, word_vocab, n_head, n_layers, dropout):
@@ -436,26 +435,29 @@ class DecoderTransformer_scst(nn.Module):
         self.word_vocab = word_vocab
         self.dropout = dropout
         
-        # 3 Kanal Girişi: Before (1) + After (1) + Diff (1) = 3 * encoder_dim
-        self.Conv1 = nn.Conv2d(encoder_dim * 3, feature_dim, kernel_size=1)
+        # --- DÜZELTME ---
+        # Orijinal kodda x1 ve x2 birleştirildiği için giriş kanalı sayısı encoder_dim * 2 olmalı.
+        # (Önceki 3 katsayısı hata veriyordu çünkü diff vektörü yok)
+        self.Conv1 = nn.Conv2d(encoder_dim * 2, feature_dim, kernel_size=1)
+        
         self.LN = resblock(feature_dim, feature_dim)
-        
-        # Embedding
+        # embedding layer
         self.vocab_embedding = nn.Embedding(vocab_size, self.embed_dim)
-        
-        # Transformer
-        decoder_layer = Mesh_TransformerDecoderLayer(feature_dim, n_head, dim_feedforward=feature_dim * 4, dropout=self.dropout)
+        # Transformer layer
+        decoder_layer = Mesh_TransformerDecoderLayer(feature_dim, n_head, dim_feedforward=feature_dim * 4,
+                                                   dropout=self.dropout)
         self.transformer = StackTransformer(decoder_layer, n_layers)
         self.position_encoding = PositionalEncoding(feature_dim, max_len=max_lengths)
 
-        # Output Head
+        # Linear layer to find scores over vocabulary
         self.wdc = nn.Linear(feature_dim, vocab_size)
-        self.dropout_layer = nn.Dropout(p=self.dropout) # İsim çakışmasını önlemek için dropout_layer yaptım
-        
-        # Weight Tying (Embedding ve Output ağırlıklarını paylaştır)
-        self.wdc.weight = self.vocab_embedding.weight
-        
+        self.dropout_layer = nn.Dropout(p=self.dropout) # Çakışmayı önlemek için isim değişti
+        self.cos = torch.nn.CosineSimilarity(dim=1)
+
         self.init_weights()
+        
+        # Weight tying
+        self.wdc.weight = self.vocab_embedding.weight
 
     def init_weights(self):
         self.vocab_embedding.weight.data.uniform_(-0.1, 0.1)
@@ -464,43 +466,41 @@ class DecoderTransformer_scst(nn.Module):
 
     def _prepare_features(self, x1, x2):
         """
-        Görüntü özelliklerini hazırlayan ortak yardımcı fonksiyon.
-        x1: Before Image Features
-        x2: After Image Features
+        Orijinal feature hazırlama mantığı (Diff olmadan).
+        Tüm sample fonksiyonları bunu kullanır.
         """
-        # Hata kaynağı burasıydı. Conv1, 3 katman (3*EncoderDim) bekliyor.
-        # Bu yüzden Before, After ve Difference (Fark) vektörlerini birleştiriyoruz.
-        diff = x2 - x1
-        x = torch.cat([x1, x2, diff], dim=1) 
+        # Cosine similarity (Broadcasting için unsqueeze yapılır)
+        x_sam = self.cos(x1, x2)
         
-        # Conv1 ve LayerNorm
+        # Sadece x1 ve x2 birleştirilir (encoder_dim * 2 channels)
+        # x_sam eklenerek özellikler zenginleştirilir
+        x = torch.cat([x1, x2], dim=1) + x_sam.unsqueeze(1) 
+        
         x = self.LN(self.Conv1(x))
 
-        # Transformer formatına dönüştürme: (Batch, Channel, H, W) -> (Seq_Len, Batch, Dim)
         batch, channel = x.size(0), x.size(1)
+        # (Batch, Channel, H, W) -> (Seq_Len, Batch, Dim) transformer formatı
         x = x.view(batch, channel, -1).permute(2, 0, 1)
+        
         return x
 
     def forward(self, x1, x2, encoded_captions, caption_lengths):
         """
-        Standart Eğitim (Cross-Entropy Loss) için Forward Pass
+        Standard Forward Pass (Cross-Entropy Training)
         """
-        # Ortak feature hazırlığı
         x = self._prepare_features(x1, x2)
         
         word_length = encoded_captions.size(1)
         mask = torch.triu(torch.ones(word_length, word_length) * float('-inf'), diagonal=1).cuda()
-        
         tgt_pad_mask = (encoded_captions == self.word_vocab['<NULL>']) | (encoded_captions == self.word_vocab['<END>'])
         
-        word_emb = self.vocab_embedding(encoded_captions).transpose(1, 0) # (Len, Batch, Dim)
+        word_emb = self.vocab_embedding(encoded_captions).transpose(1, 0)
         word_emb = self.position_encoding(word_emb)
 
         pred = self.transformer(word_emb, x, tgt_mask=mask, tgt_key_padding_mask=tgt_pad_mask)
-        pred = self.wdc(self.dropout_layer(pred)) # (Len, Batch, Vocab)
-        pred = pred.permute(1, 0, 2) # (Batch, Len, Vocab)
+        pred = self.wdc(self.dropout_layer(pred))
+        pred = pred.permute(1, 0, 2)
         
-        # Uzunluğa göre sıralama (Pack_padded_sequence için gerekli)
         caption_lengths, sort_ind = caption_lengths.sort(dim=0, descending=True)
         encoded_captions = encoded_captions[sort_ind]
         pred = pred[sort_ind]
@@ -508,72 +508,57 @@ class DecoderTransformer_scst(nn.Module):
         
         return pred, encoded_captions, decode_lengths, sort_ind
 
+    # --- SCST METHODS ---
+
     def sample_scst(self, x1, x2, sample_max_len=40):
         """
-        SCST (Self-Critical) Eğitimi için Monte-Carlo Sampling.
-        Reinforcement Learning için hem cümleleri (seqs) hem de log olasılıkları (log_probs) döndürür.
+        SCST için Monte-Carlo Sampling (Gradientli).
         """
-        # 1. Feature Hazırlığı
         x = self._prepare_features(x1, x2)
         batch = x.size(1)
         device = x.device
 
-        # Başlangıç Tokenları
         curr_tgt = torch.full((batch, 1), self.word_vocab['<START>'], dtype=torch.long).to(device)
         
         seqs = []
         log_probs = []
         
-        # Maske (Triangular)
         mask = torch.triu(torch.ones(sample_max_len, sample_max_len) * float('-inf'), diagonal=1).to(device)
         
         for step in range(sample_max_len - 1):
-            # Padding mask (Sadece NULL tokenlar için)
             tgt_pad_mask = (curr_tgt == self.word_vocab['<NULL>'])
             
-            # Embedding
             word_emb = self.vocab_embedding(curr_tgt).transpose(1, 0)
             word_emb = self.position_encoding(word_emb)
             
-            # Transformer Forward (Mevcut adıma kadar olan maskeyi kullan)
             curr_mask = mask[:step+1, :step+1]
             pred = self.transformer(word_emb, x, tgt_mask=curr_mask, tgt_key_padding_mask=tgt_pad_mask)
             
-            # Son tokenin çıktısını al
-            last_output = pred[-1, :, :] # (Batch, Dim)
-            logits = self.wdc(self.dropout_layer(last_output)) # (Batch, Vocab)
+            last_output = pred[-1, :, :]
+            logits = self.wdc(self.dropout_layer(last_output))
             
-            # --- MULTINOMIAL SAMPLING (SCST için kritik nokta) ---
-            # Rastgele seçim yaparak uzayı keşfeder (Exploration)
+            # Multinomial Sampling
             probs = F.softmax(logits, dim=-1)
-            token = probs.multinomial(1) # (Batch, 1)
+            token = probs.multinomial(1)
             
-            # Gradient hesaplaması için Log Prob kaydı
             log_prob = F.log_softmax(logits, dim=-1)
-            token_log_prob = log_prob.gather(1, token).squeeze(1) # (Batch,)
+            token_log_prob = log_prob.gather(1, token).squeeze(1)
             
-            # Kaydet
             seqs.append(token.squeeze(1))
             log_probs.append(token_log_prob)
             
-            # Bir sonraki adım için input güncelleme
             curr_tgt = torch.cat([curr_tgt, token], dim=1)
-            
-            # Eğer tüm batch <END> ürettiyse erken durdurma eklenebilir (Performans için opsiyonel)
 
-        # Listeleri Tensor yap
-        seqs = torch.stack(seqs, dim=1) # (Batch, Len)
-        log_probs = torch.stack(log_probs, dim=1) # (Batch, Len)
+        seqs = torch.stack(seqs, dim=1)
+        log_probs = torch.stack(log_probs, dim=1)
         
         return seqs, log_probs
 
     def sample_greedy(self, x1, x2, sample_max_len=40):
         """
-        SCST Baseline (Ödül hesaplaması) için Greedy (Argmax) Sampling.
-        Gradient gerektirmez.
+        SCST Baseline için Greedy Sampling (Gradientsiz).
         """
-        with torch.no_grad(): # Baseline için gradient takibi gerekmez
-            # 1. Feature Hazırlığı
+        with torch.no_grad():
             x = self._prepare_features(x1, x2)
             batch = x.size(1)
             device = x.device
@@ -582,7 +567,6 @@ class DecoderTransformer_scst(nn.Module):
             tgt[:, 0] = self.word_vocab['<START>']
             
             seqs = []
-            
             mask = torch.triu(torch.ones(sample_max_len, sample_max_len) * float('-inf'), diagonal=1).to(device)
             
             for step in range(sample_max_len - 1):
@@ -598,31 +582,29 @@ class DecoderTransformer_scst(nn.Module):
                 last_output = pred[-1, :, :]
                 logits = self.wdc(last_output)
                 
-                # --- GREEDY SEÇİM (ARGMAX) ---
-                # En yüksek olasılıklı kelimeyi seçer (Exploitation)
+                # Greedy Argmax
                 token = logits.argmax(dim=-1)
                 
                 seqs.append(token)
                 tgt[:, step+1] = token
 
-            seqs = torch.stack(seqs, dim=1) # (Batch, Len)
+            seqs = torch.stack(seqs, dim=1)
             return seqs
+
+    # --- EXISTING SAMPLING METHODS ---
 
     def sample(self, x1, x2, k=1):
         """
-        Test zamanı kullanım (Legacy/Validation için).
-        Batch=1 varsayımı ile çalışır (Orijinal koda sadık kalınarak revize edildi).
+        Legacy/Test sampling.
         """
-        # Feature hazırlığı
-        x = self._prepare_features(x1, x2) #(hw, batch_size, feature_dim)
+        x = self._prepare_features(x1, x2)
         batch = x.size(1)
 
         tgt = torch.zeros(batch, self.max_lengths).to(torch.int64).cuda()
         mask = torch.triu(torch.ones(self.max_lengths, self.max_lengths) * float('-inf'), diagonal=1).cuda()
-        
         tgt[:, 0] = self.word_vocab['<START>']
         seqs = torch.LongTensor([[self.word_vocab['<START>']]] * batch).cuda()
-
+        
         for step in range(self.max_lengths):
             tgt_pad_mask = (tgt == self.word_vocab['<NULL>'])
             word_emb = self.vocab_embedding(tgt).transpose(1, 0)
@@ -633,8 +615,8 @@ class DecoderTransformer_scst(nn.Module):
             
             scores = pred.permute(1, 0, 2)
             scores = scores[:, step, :].squeeze(1)
-            
             predicted_id = torch.argmax(scores, axis=-1)
+            
             seqs = torch.cat([seqs, predicted_id.unsqueeze(1)], dim=-1)
             
             if predicted_id == self.word_vocab['<END>']:
@@ -645,4 +627,81 @@ class DecoderTransformer_scst(nn.Module):
         seqs = seqs.squeeze(0).tolist()
         return seqs
 
-    # sample_beam fonksiyonunu olduğu gibi koruyabilir veya _prepare_features ile güncelleyebilirsiniz.
+    def sample_beam(self, x1, x2, k=1):
+        """
+        Beam Search Sampling.
+        """
+        # Özellik hazırlığı (Beam search için batch boyutu ayarı burada değil, aşağıda yapılır)
+        x_sam = self.cos(x1, x2)
+        x = torch.cat([x1, x2], dim=1) + x_sam.unsqueeze(1)
+        x = self.LN(self.Conv1(x))
+        
+        batch, channel, h, w = x.shape
+        
+        # Expand for beam search (k copies per sample)
+        x = x.view(batch, channel, -1).unsqueeze(0).expand(k, -1, -1, -1).reshape(batch*k, channel, h*w).permute(2, 0, 1)
+
+        tgt = torch.zeros(k*batch, self.max_lengths).to(torch.int64).cuda()
+        mask = (torch.triu(torch.ones(self.max_lengths, self.max_lengths)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0)).cuda()
+        
+        tgt[:, 0] = self.word_vocab['<START>']
+        seqs = torch.LongTensor([[self.word_vocab['<START>']]] * batch * k).cuda()
+        
+        top_k_scores = torch.zeros(k*batch, 1).cuda()
+        complete_seqs = []
+        complete_seqs_scores = []
+        
+        for step in range(self.max_lengths):
+            word_emb = self.vocab_embedding(tgt).transpose(1, 0)
+            word_emb = self.position_encoding(word_emb)
+            
+            pred = self.transformer(word_emb, x, tgt_mask=mask)
+            pred = self.wdc(self.dropout_layer(pred))
+            
+            scores = pred.permute(1, 0, 2)
+            scores = scores[:, step, :].squeeze(1)
+            scores = F.log_softmax(scores, dim=1)
+
+            if step == 0:
+                scores = scores[0] 
+                top_k_scores, top_k_words = scores.topk(k, 0, True, True) 
+                top_k_scores = top_k_scores.unsqueeze(1)
+                prev_word_inds = torch.zeros(k, dtype=torch.long).cuda()
+                next_word_inds = top_k_words
+            else:
+                scores = top_k_scores.expand_as(scores) + scores
+                top_k_scores, top_k_words = scores.view(-1).topk(k, 0, True, True)
+                top_k_scores = top_k_scores.unsqueeze(1)
+                prev_word_inds = torch.div(top_k_words, self.vocab_size, rounding_mode='floor')
+                next_word_inds = top_k_words % self.vocab_size
+
+            seqs = torch.cat([seqs[prev_word_inds], next_word_inds.unsqueeze(1)], dim=1)
+            
+            incomplete_inds = [ind for ind, next_word in enumerate(next_word_inds) if next_word != self.word_vocab['<END>']]
+            complete_inds = list(set(range(len(next_word_inds))) - set(incomplete_inds))
+            
+            if len(complete_inds) > 0:
+                complete_seqs.extend(seqs[complete_inds].tolist())
+                complete_seqs_scores.extend(top_k_scores[complete_inds].squeeze(1).tolist())
+            
+            k -= len(complete_inds)
+            if k == 0:
+                break
+            
+            seqs = seqs[incomplete_inds]
+            x = x[:, prev_word_inds[incomplete_inds]]
+            top_k_scores = top_k_scores[incomplete_inds]
+            tgt = tgt[incomplete_inds]
+            if step < self.max_lengths - 1:
+                tgt[:, :step+2] = seqs
+
+        if len(complete_seqs) == 0:
+            complete_seqs.extend(seqs.tolist())
+            complete_seqs_scores.extend(top_k_scores.squeeze(1).tolist())
+
+        alpha = 0.7
+        normalized_scores = [s / (len(seq) ** alpha) for s, seq in zip(complete_seqs_scores, complete_seqs)]
+        best_idx = normalized_scores.index(max(normalized_scores))
+        
+        return complete_seqs[best_idx]
