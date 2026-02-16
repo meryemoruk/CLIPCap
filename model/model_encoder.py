@@ -515,6 +515,7 @@ class AttentiveEncoder(nn.Module):
 
         for (resblock, cross) in self.selftrans:           
             img = torch.cat([img_sa1, img_sa2], dim = -1)
+            img = img.unsqueeze(0)
             print(img.shape)
             img = resblock(img)
 
