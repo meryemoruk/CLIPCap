@@ -447,6 +447,25 @@ class CrossAttentionBlock(nn.Module):
         
         return tgt
 
+class SpatialAttention(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        # Özellik haritasını 1 kanala (önem derecesine) indir
+        self.conv = nn.Conv1d(dim, 1, kernel_size=1) 
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x_original, x_fused):
+        # x_fused: [B, N, D] -> [B, D, N] (Conv1d için)
+        map_in = x_fused.permute(0, 2, 1)
+        
+        # Dikkat haritası: [B, 1, N]
+        attention_map = self.sigmoid(self.conv(map_in))
+        
+        # [B, 1, N] -> [B, N, 1]
+        attention_map = attention_map.permute(0, 2, 1)
+        
+        # Orijinal veriyi önem derecesine göre ölçekle
+        return x_original * attention_map
 
 class AttentiveEncoder(nn.Module):
     """
@@ -463,7 +482,8 @@ class AttentiveEncoder(nn.Module):
         for i in range(n_layers):                 
             self.selftrans.append(nn.ModuleList([
                 FusionConvBlock(channels),
-                Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
+                SpatialAttention(channels)
+                # Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
             ]))
 
         # self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
@@ -524,7 +544,7 @@ class AttentiveEncoder(nn.Module):
         img2 = img2.view(batch, c, -1).transpose(-1, 1)
         img_sa1, img_sa2 = img1, img2
 
-        for (resblock, cross) in self.selftrans:           
+        for (resblock, spatial) in self.selftrans:           
             img_concat = torch.cat([img_sa1, img_sa2], dim = -1)
             
             H = W = int(img_concat.shape[1] ** 0.5) 
@@ -535,8 +555,8 @@ class AttentiveEncoder(nn.Module):
 
             img_fused = img_fused.flatten(2).permute(0, 2, 1)
 
-            img_sa1 = cross(img_sa1, img_fused, img_fused) + img_sa1 
-            img_sa2 = cross(img_sa2, img_fused, img_fused) + img_sa2
+            img_sa1 = spatial(img_sa1, img_fused) + img_sa1 
+            img_sa2 = spatial(img_sa2, img_fused) + img_sa2
 
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
