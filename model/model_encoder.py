@@ -451,7 +451,6 @@ class AttentiveEncoder(nn.Module):
         self.selftrans = nn.ModuleList([])
         for i in range(n_layers):                 
             self.selftrans.append(nn.ModuleList([
-                Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
                 resblock(channels*2, channels),
                 CrossAttentionBlock(channels, heads, dropout)
             ]))
@@ -514,11 +513,9 @@ class AttentiveEncoder(nn.Module):
         img2 = img2.view(batch, c, -1).transpose(-1, 1)
         img_sa1, img_sa2 = img1, img2
 
-        for (selfAtt, resblock, cross) in self.selftrans:           
-            img_sa1 = selfAtt(img_sa1, img_sa1, img_sa1) + img_sa1
-            img_sa2 = selfAtt(img_sa2, img_sa2, img_sa2) + img_sa2
-
+        for (resblock, cross) in self.selftrans:           
             img = torch.cat([img_sa1, img_sa2], dim = -1)
+            print(img.shape)
             img = resblock(img)
 
             img_sa1 = cross(img_sa1, img) + img_sa1 
