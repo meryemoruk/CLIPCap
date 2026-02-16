@@ -244,17 +244,6 @@ class Encoder(nn.Module):
 
         self.featureCNN = FeatureCNN(1024)
 
-
-        # model_encoder.py -> Encoder sınıfı -> __init__ sonu
-        print("\n--- PARAMETRE DURUM KONTROLÜ ---")
-        for name, param in self.named_parameters():
-            if param.requires_grad:
-                print(f"EĞİTİLİYOR (Gradient Var): {name}")
-            else:
-                # Çok fazla çıktı olmaması için frozen olanları yazdırmayabiliriz
-                pass
-        print("--------------------------------\n")
-
     def forward(self, imageA, imageB):
         """
         Forward propagation.
@@ -284,17 +273,13 @@ class Encoder(nn.Module):
             featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
             featB = self.model(imageB)
 
-        featA_CNN = self.featureCNN(featA.float())
-        featB_CNN = self.featureCNN(featB.float())
-        
-        #residual
-        featA = featA + featA_CNN
-        featB = featB + featB_CNN
+            featA = self.featureCNN(featA.float())
+            featB = self.featureCNN(featB.float())
 
-        mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
+            mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
 
-        featA = featA * mask_spatial
-        featB = featB * mask_spatial
+            featA = featA * mask_spatial
+            featB = featB * mask_spatial
 
         # maskedfeat1 = torch.cat([feat1, maskedfeat1], dim=1)
         # maskedfeat2 = torch.cat([feat2, maskedfeat2], dim=1)
@@ -384,6 +369,74 @@ class Transformer(nn.Module):
 
         return x
 
+
+class resblock(nn.Module):
+    '''
+    module: Residual Block
+    '''
+    def __init__(self, inchannel, outchannel, stride=1, shortcut=None):
+        super(resblock, self).__init__()
+        self.left = nn.Sequential(
+                nn.Conv2d(inchannel,int(outchannel/2),kernel_size = 1),
+                # nn.LayerNorm(int(outchannel/2),dim=1),
+                nn.BatchNorm2d(int(outchannel/2)),
+                nn.ReLU(),
+                nn.Conv2d(int(outchannel/2), int(outchannel / 2), kernel_size = 3, stride=1, padding=1),
+                # nn.LayerNorm(int(outchannel/2),dim=1),
+                nn.BatchNorm2d(int(outchannel / 2)),
+                nn.ReLU(),
+                nn.Conv2d(int(outchannel/2),outchannel,kernel_size = 1),
+                # nn.LayerNorm(int(outchannel / 1),dim=1)
+                nn.BatchNorm2d(outchannel)
+        )
+        self.right = shortcut
+
+    def forward(self, x):
+        out = self.left(x)
+        residual = x
+        out = out + residual
+        return F.relu(out)
+
+class CrossAttentionBlock(nn.Module):
+    def __init__(self, d_model, nhead, dropout=0.1):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+        
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * 4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model * 4, d_model)
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, tgt, memory, mask=None):
+        """
+        tgt: Image B (Current)
+        memory: Image A (Reference)
+        """
+        # 1. Self Attention (Image B kendi içine bakar)
+        tgt2 = self.norm1(tgt)
+        tgt2, _ = self.self_attn(tgt2, tgt2, tgt2)
+        tgt = tgt + self.dropout(tgt2)
+
+        # 2. Cross Attention (Image B, Image A'ya bakar: "Ne değişti?")
+        tgt2 = self.norm2(tgt)
+        tgt2, _ = self.cross_attn(query=tgt2, key=memory, value=memory)
+        tgt = tgt + self.dropout(tgt2)
+
+        # 3. Feed Forward
+        tgt2 = self.norm3(tgt)
+        tgt = tgt + self.dropout(self.ffn(tgt2))
+        
+        return tgt
+
+
 class AttentiveEncoder(nn.Module):
     """
     One visual transformer block
@@ -391,17 +444,6 @@ class AttentiveEncoder(nn.Module):
     def __init__(self, n_layers, feature_size, heads, hidden_dim, attention_dim = 512, dropout = 0., network = "resnet101"):
         super(AttentiveEncoder, self).__init__()
         h_feat, w_feat, channels = feature_size
-
-        # --- EKLENECEK KISIM (BAŞLANGIÇ) ---
-        # 0: Before (Önceki Görüntü), 1: After (Sonraki Görüntü)
-        # Channels boyutu feature_size[2] yani 'channels' değişkeninden gelir.
-        self.time_embedding = nn.Embedding(2, channels)
-        
-        # Embedding'i sıfıra yakın başlat ki eğitimi patlatmasın, yavaş yavaş öğrensin
-        self.time_embedding.weight.data.normal_(0, 0.02)
-        # --- EKLENECEK KISIM (BİTİŞ) ---
-
-
         self.network = network
         
         self.h_embedding = nn.Embedding(h_feat, int(channels/2))
@@ -410,7 +452,8 @@ class AttentiveEncoder(nn.Module):
         for i in range(n_layers):                 
             self.selftrans.append(nn.ModuleList([
                 Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
-                Transformer(channels*2, channels*2, heads, attention_dim, hidden_dim, dropout, norm_first=False),
+                resblock(channels*2, channels),
+                CrossAttentionBlock(channels, heads, dropout)
             ]))
 
         # self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
@@ -467,55 +510,19 @@ class AttentiveEncoder(nn.Module):
         pos_embedding = pos_embedding.permute(2,0,1).unsqueeze(0).repeat(batch, 1, 1, 1)
         img1 = img1 + pos_embedding
         img2 = img2 + pos_embedding
-
-        # --- EKLENECEK KISIM (BAŞLANGIÇ) ---
-        # Time Embedding Hazırlığı
-        # Tip 0: Önceki Görüntü (Before)
-        # Tip 1: Sonraki Görüntü (After)
-        
-        # (Channels,) boyutunda vektör alırız
-        time_emb_before = self.time_embedding(torch.tensor(0).to(img1.device)) 
-        time_emb_after  = self.time_embedding(torch.tensor(1).to(img1.device))
-        
-        # Boyutları (Batch, Channels, H, W) formatına uydurmak için:
-        # (C) -> (1, C, 1, 1) şeklinde genişletip ekliyoruz (Broadcasting)
-        img1 = img1 + time_emb_before.view(1, c, 1, 1)
-        img2 = img2 + time_emb_after.view(1, c, 1, 1)
-        # --- EKLENECEK KISIM (BİTİŞ) ---
-
         img1 = img1.view(batch, c, -1).transpose(-1, 1)#batch, hw, c
         img2 = img2.view(batch, c, -1).transpose(-1, 1)
         img_sa1, img_sa2 = img1, img2
 
-        # diffAB = img2 - img1
-        # diffBA = img2 - img1
-        
-        # mask_spatial = F.interpolate(mask, size=(h, w), mode='bicubic', align_corners=False)
-        # mask_flat = mask_spatial.flatten(2).transpose(1, 2)
-
-        # diffBA = mask_flat * diffBA
-        # diffAB = mask_flat * diffAB
-
-        for (l, m) in self.selftrans:      
-            img_sa1 = l(img_sa1, img_sa1, img_sa1) + img_sa1
-            img_sa2 = l(img_sa2, img_sa2, img_sa2) + img_sa2
-
-            # diffAB = l(diffAB, diffAB, diffAB) + diffAB
-            # diffBA = l(diffBA, diffBA, diffBA) + diffBA
-
-            # img_ca1 = self.cross_attr1(img_sa1, img_sa2, img_sa2)
-            # img_ca2 = self.cross_attr1(img_sa2, img_sa1, img_sa1)
-            # mask_product = mask.view(batch, 49, 1)
-            # img_sa1 = img_sa1 * mask_product
-            # img_sa2 = img_sa2 * mask_product
+        for (selfAtt, resblock, cross) in self.selftrans:           
+            img_sa1 = selfAtt(img_sa1, img_sa1, img_sa1) + img_sa1
+            img_sa2 = selfAtt(img_sa2, img_sa2, img_sa2) + img_sa2
 
             img = torch.cat([img_sa1, img_sa2], dim = -1)
-            # mask_double = torch.cat([mask], dim = -1)
-            img = m(img, img, img)
-            img_sa1 = img[:,:,:c] + img1 #+ diffBA #+ img_ca1
-            img_sa2 = img[:,:,c:] + img2 #+ diffAB #+ img_ca2
-            # img_sa1 = self.last_norm1(img_sa1)
-            # img_sa2 = self.last_norm2(img_sa2)
+            img = resblock(img)
+
+            img_sa1 = cross(img_sa1, img) + img_sa1 
+            img_sa2 = cross(img_sa2, img) + img_sa2
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
         img2 = img_sa2.reshape(batch, h, w, c).transpose(-1, 1)
@@ -539,45 +546,6 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         # x: [Batch, Seq_Len, Channel]
         return x + self.pe[:x.size(1), :].unsqueeze(0)
-
-class CrossAttentionBlock(nn.Module):
-    def __init__(self, d_model, nhead, dropout=0.1):
-        super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
-        self.cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
-        
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
-        
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model * 4),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * 4, d_model)
-        )
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, tgt, memory, mask=None):
-        """
-        tgt: Image B (Current)
-        memory: Image A (Reference)
-        """
-        # 1. Self Attention (Image B kendi içine bakar)
-        tgt2 = self.norm1(tgt)
-        tgt2, _ = self.self_attn(tgt2, tgt2, tgt2)
-        tgt = tgt + self.dropout(tgt2)
-
-        # 2. Cross Attention (Image B, Image A'ya bakar: "Ne değişti?")
-        tgt2 = self.norm2(tgt)
-        tgt2, _ = self.cross_attn(query=tgt2, key=memory, value=memory)
-        tgt = tgt + self.dropout(tgt2)
-
-        # 3. Feed Forward
-        tgt2 = self.norm3(tgt)
-        tgt = tgt + self.dropout(self.ffn(tgt2))
-        
-        return tgt
 
 class ChangeAwareEncoder(nn.Module):
     def __init__(self, feature_dim=1024, heads=8, n_layers=2, hidden_dim=2048, dropout=0.1):
