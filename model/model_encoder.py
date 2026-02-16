@@ -408,10 +408,10 @@ class CrossAttentionBlock(nn.Module):
         self.norm3 = nn.LayerNorm(d_model)
         
         self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model * 4),
+            nn.Linear(d_model, d_model * 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(d_model * 4, d_model)
+            nn.Linear(d_model * 2, d_model)
         )
         self.dropout = nn.Dropout(dropout)
 
@@ -515,15 +515,17 @@ class AttentiveEncoder(nn.Module):
 
         for (resblock, cross) in self.selftrans:           
             img = torch.cat([img_sa1, img_sa2], dim = -1)
-            img = img.unsqueeze(0)
-            print(img.shape)
-            img = resblock(img)
+            img_fused = resblock(img)
 
-            img_sa1 = cross(img_sa1, img) + img_sa1 
-            img_sa2 = cross(img_sa2, img) + img_sa2
+            img_sa1 = cross(img_sa1, img_fused) + img_sa1 
+            img_sa2 = cross(img_sa2, img_fused) + img_sa2
+
+            print(img_sa1.shape)
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
         img2 = img_sa2.reshape(batch, h, w, c).transpose(-1, 1)
+
+        print(img_sa1.shape)
 
         return img1, img2
     
