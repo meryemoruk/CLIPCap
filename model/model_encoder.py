@@ -370,32 +370,49 @@ class Transformer(nn.Module):
         return x
 
 
-class resblock(nn.Module):
-    '''
-    module: Residual Block
-    '''
-    def __init__(self, inchannel, outchannel, stride=1, shortcut=None):
-        super(resblock, self).__init__()
-        self.left = nn.Sequential(
-                nn.Conv2d(inchannel,int(outchannel/2),kernel_size = 1),
-                # nn.LayerNorm(int(outchannel/2),dim=1),
-                nn.BatchNorm2d(int(outchannel/2)),
-                nn.ReLU(),
-                nn.Conv2d(int(outchannel/2), int(outchannel / 2), kernel_size = 3, stride=1, padding=1),
-                # nn.LayerNorm(int(outchannel/2),dim=1),
-                nn.BatchNorm2d(int(outchannel / 2)),
-                nn.ReLU(),
-                nn.Conv2d(int(outchannel/2),outchannel,kernel_size = 1),
-                # nn.LayerNorm(int(outchannel / 1),dim=1)
-                nn.BatchNorm2d(outchannel)
+class FusionConvBlock(nn.Module):
+    def __init__(self, dim):
+        super(FusionConvBlock, self).__init__()
+        
+        # Giriş boyutu concat olduğu için (dim * 2) olacak.
+        # Hedef boyut (dim) olacak.
+        
+        # 1. Adım: Boyut düşürme ve özellik karıştırma
+        self.reduce_conv = nn.Sequential(
+            nn.Conv2d(dim * 2, dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(dim),
+            nn.ReLU(inplace=True)
         )
-        self.right = shortcut
+        
+        # 2. Adım: Mekansal (Spatial) işleme (3x3)
+        self.spatial_conv = nn.Sequential(
+            nn.Conv2d(dim, dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(dim),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(dim, dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(dim)
+        )
+        
+        # Non-linearity
+        self.final_relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        out = self.left(x)
-        residual = x
-        out = out + residual
-        return F.relu(out)
+        # x shape: [Batch, 2*Dim, Height, Width]
+        
+        # Önce boyutu düşür
+        x_reduced = self.reduce_conv(x)
+        
+        # Residual bağlantı için kopyasını tut
+        identity = x_reduced
+        
+        # Mekansal işleme
+        out = self.spatial_conv(x_reduced)
+        
+        # Residual bağlantı (Skip Connection)
+        out = out + identity
+        out = self.final_relu(out)
+        
+        return out
 
 class CrossAttentionBlock(nn.Module):
     def __init__(self, d_model, nhead, dropout=0.1):
@@ -451,7 +468,7 @@ class AttentiveEncoder(nn.Module):
         self.selftrans = nn.ModuleList([])
         for i in range(n_layers):                 
             self.selftrans.append(nn.ModuleList([
-                resblock(channels*2, channels),
+                FusionConvBlock(channels),
                 CrossAttentionBlock(channels, heads, dropout)
             ]))
 
@@ -514,19 +531,22 @@ class AttentiveEncoder(nn.Module):
         img_sa1, img_sa2 = img1, img2
 
         for (resblock, cross) in self.selftrans:           
-            img = torch.cat([img_sa1, img_sa2], dim = -1)
-            img = img.unsqueeze(0)
-            img_fused = resblock(img)
+            img_concat = torch.cat([img_sa1, img_sa2], dim = -1)
+            
+            H = W = int(img_concat.shape[1] ** 0.5) 
+            # [B, N, 2D] -> [B, 2D, N] -> [B, 2D, H, W]
+            img_spatial = img_concat.permute(0, 2, 1).view(-1, img_concat.shape[-1], H, W)
+
+            img_fused = resblock(img_spatial)
+
+            img_fused = img_fused.flatten(2).permute(0, 2, 1)
 
             img_sa1 = cross(img_sa1, img_fused) + img_sa1 
             img_sa2 = cross(img_sa2, img_fused) + img_sa2
 
-            print(img_sa1.shape)
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
         img2 = img_sa2.reshape(batch, h, w, c).transpose(-1, 1)
-
-        print(img_sa1.shape)
 
         return img1, img2
     
