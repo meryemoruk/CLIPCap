@@ -463,7 +463,7 @@ class AttentiveEncoder(nn.Module):
         for i in range(n_layers):                 
             self.selftrans.append(nn.ModuleList([
                 FusionConvBlock(channels),
-                CrossAttentionBlock(channels, heads, dropout)
+                Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
             ]))
 
         # self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
@@ -535,8 +535,8 @@ class AttentiveEncoder(nn.Module):
 
             img_fused = img_fused.flatten(2).permute(0, 2, 1)
 
-            img_sa1 = cross(img_sa1, img_fused) + img_sa1 
-            img_sa2 = cross(img_sa2, img_fused) + img_sa2
+            img_sa1 = cross(img_sa1, img_fused, img_fused) + img_sa1 
+            img_sa2 = cross(img_sa2, img_fused, img_fused) + img_sa2
 
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
