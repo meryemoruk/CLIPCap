@@ -417,18 +417,16 @@ class FusionConvBlock(nn.Module):
 class CrossAttentionBlock(nn.Module):
     def __init__(self, d_model, nhead, dropout=0.1):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         self.cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
         
         self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model * 2),
+            nn.Linear(d_model, d_model * 4),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(d_model * 2, d_model)
+            nn.Linear(d_model * 4, d_model)
         )
         self.dropout = nn.Dropout(dropout)
 
@@ -437,18 +435,14 @@ class CrossAttentionBlock(nn.Module):
         tgt: Image B (Current)
         memory: Image A (Reference)
         """
-        # 1. Self Attention (Image B kendi içine bakar)
-        tgt2 = self.norm1(tgt)
-        tgt2, _ = self.self_attn(tgt2, tgt2, tgt2)
-        tgt = tgt + self.dropout(tgt2)
-
+        
         # 2. Cross Attention (Image B, Image A'ya bakar: "Ne değişti?")
-        tgt2 = self.norm2(tgt)
+        tgt2 = self.norm1(tgt)
         tgt2, _ = self.cross_attn(query=tgt2, key=memory, value=memory)
         tgt = tgt + self.dropout(tgt2)
 
         # 3. Feed Forward
-        tgt2 = self.norm3(tgt)
+        tgt2 = self.norm2(tgt)
         tgt = tgt + self.dropout(self.ffn(tgt2))
         
         return tgt
