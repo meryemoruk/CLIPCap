@@ -505,7 +505,7 @@ class FiLMBlock(nn.Module):
 
 class FusionFeed(nn.Module):
     def __init__(self, dim, dropout = 0.):
-        super(FeedForward, self).__init__()
+        super(FusionFeed, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(dim*2, dim*4),
             nn.ReLU(),
@@ -537,7 +537,7 @@ class AttentiveEncoder(nn.Module):
         for i in range(n_layers):                 
             self.selftrans.append(nn.ModuleList([
                 Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
-                FusionFeed(channels),
+                FusionFeed(channels, dropout),
             ]))
 
         # self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
