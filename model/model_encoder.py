@@ -467,6 +467,42 @@ class SpatialAttention(nn.Module):
         # Orijinal veriyi önem derecesine göre ölçekle
         return x_original * attention_map
 
+class FiLMBlock(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        
+        # img_fused (condition) bilgisinden gamma ve beta üret
+        # dim -> dim * 2 (hem gamma hem beta için)
+        self.cond_proj = nn.Linear(dim, dim * 2)
+        
+        # İsteğe bağlı: Gamma ve Beta'nın hemen devreye girmemesi için 
+        # ağırlıkları 0'a yakın başlatmak iyi bir pratiktir.
+        self._init_weights()
+
+    def _init_weights(self):
+        # Linear katmanın ağırlıklarını sıfıra yakın başlatıyoruz
+        nn.init.constant_(self.cond_proj.weight, 0)
+        nn.init.constant_(self.cond_proj.bias, 0)
+
+    def forward(self, x_content, x_condition):
+        """
+        x_content: img_sa1 veya img_sa2 (Değiştirilecek özellik)
+        x_condition: img_fused (Değişiklik bilgisi)
+        """
+        
+        # 1. Gamma ve Beta'yı üret
+        # x_condition shape: [Batch, N, Dim]
+        params = self.cond_proj(x_condition)
+        
+        # Chunk ile ikiye böl: Gamma ve Beta
+        gamma, beta = torch.chunk(params, 2, dim=-1)
+        
+        # 2. Residual FiLM İşlemi (Formül: (1 + gamma) * x + beta)
+        # Eğer gamma ve beta 0 ise, sonuç direkt x_content olur (Residual etkisi).
+        out = (1 + gamma) * x_content + beta
+        
+        return out
+
 class AttentiveEncoder(nn.Module):
     """
     One visual transformer block
@@ -482,7 +518,7 @@ class AttentiveEncoder(nn.Module):
         for i in range(n_layers):                 
             self.selftrans.append(nn.ModuleList([
                 FusionConvBlock(channels),
-                SpatialAttention(channels)
+                FiLMBlock(channels)
                 # Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
             ]))
 
@@ -544,7 +580,7 @@ class AttentiveEncoder(nn.Module):
         img2 = img2.view(batch, c, -1).transpose(-1, 1)
         img_sa1, img_sa2 = img1, img2
 
-        for (resblock, spatial) in self.selftrans:           
+        for (resblock, film) in self.selftrans:           
             img_concat = torch.cat([img_sa1, img_sa2], dim = -1)
             
             H = W = int(img_concat.shape[1] ** 0.5) 
@@ -555,8 +591,8 @@ class AttentiveEncoder(nn.Module):
 
             img_fused = img_fused.flatten(2).permute(0, 2, 1)
 
-            img_sa1 = spatial(img_sa1, img_fused) + img_sa1 
-            img_sa2 = spatial(img_sa2, img_fused) + img_sa2
+            img_sa1 = film(img_sa1, img_fused)
+            img_sa2 = film(img_sa2, img_fused)
 
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
