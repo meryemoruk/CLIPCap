@@ -139,41 +139,56 @@ class BiDirectionalRankingLoss(nn.Module):
         # Cosine similarity: (Batch, Dim) -> (Batch)
         return F.cosine_similarity(x1, x2, dim=1)
 
-    def forward(self, d12, d21):
+    def forward(self, d12, d21, categories):
         """
-        d12: (Batch, Dim) - Before-to-After değişim vektörü
-        d21: (Batch, Dim) - After-to-Before değişim vektörü
+        d12: (Batch, Dim)
+        d21: (Batch, Dim)
+        categories: (Batch)
         """
-        batch_size = d12.size(0)
+        # 1. Vektörleri Normalize Et (L2 Norm)
+        # Cosine Similarity hesaplayabilmek için vektörlerin uzunluğunu 1'e sabitliyoruz.
+        # Bu sayede sadece dot product (çarpım) yaparak cosine similarity bulabiliriz.
+        d12_norm = F.normalize(d12, p=2, dim=1)
+        d21_norm = F.normalize(d21, p=2, dim=1)
         
-        # Pozitif benzerlik (Kendi eşleşmesi)
-        # s(d12, d21)
-        pos_sim = self.cosine_sim(d12, d21) # (Batch)
+        # 2. Tam Benzerlik Matrisi (Cosine Similarity Matrix)
+        # (Batch, Dim) x (Dim, Batch) -> (Batch, Batch)
+        # scores[i][j]: i. görüntünün değişimi ile j. görüntünün değişimi arasındaki benzerlik.
+        scores = torch.mm(d12_norm, d21_norm.t()) 
         
-        loss = 0
-        # Negatif örnekleme: Batch içindeki diğer örnekleri negatif olarak kullanıyoruz.
-        # Makale "hard negatives" veya batch içi negatiflerden bahseder.
-        # Basitlik ve verimlilik için batch içindeki en yakın negatifi (hardest negative) seçebiliriz
-        # veya tüm negatiflerin ortalamasını alabiliriz. Burada standart triplet mantığıyla
-        # batch'i karıştırarak (roll) negatif üretiyoruz.
+        # 3. Pozitif Skorlar (Köşegen Elemanlar)
+        # i. görüntü kendisiyle (i) eşleşmeli. Bu bizim hedefimiz.
+        pos_scores = scores.diag() 
         
-        # Negatif örnekler (Batch'i kaydırarak elde ediyoruz)
-        d21_neg = torch.roll(d21, shifts=1, dims=0)
-        d12_neg = torch.roll(d12, shifts=1, dims=0)
+        # 4. Kategori Maskesi (Negatif Seçimi İçin)
+        # categories: [CatA, CatB, CatA, CatC]
+        # Maske: Kategorisi FARKLI olanlar 1 (True), AYNI olanlar 0 (False).
+        # diff_cat_mask[i][j] == 1 ise i ve j farklı kategoridedir (geçerli negatif).
+        diff_cat_mask = (categories.unsqueeze(0) != categories.unsqueeze(1)).float()
         
-        # s(d12, d21-)
-        neg_sim_1 = self.cosine_sim(d12, d21_neg)
-        # s(d21, d12-)
-        neg_sim_2 = self.cosine_sim(d21, d12_neg)
+        # 5. Maskeleme (Hard Negative Mining)
+        # Bizim amacımız: Farklı kategoride olup (diff_cat_mask=1), 
+        # benzerlik skoru en yüksek (modelin en çok karıştırdığı) örneği bulmak.
         
-        # Denklem 11: L_r = max(0, margin - s(pos) + s(neg))
-        # Not: Makalede s(.) cosine distance denmiş ama formül yapısı (gamma - s + s_neg) 
-        # ve standart triplet loss mantığına göre s(.) similarity olmalıdır.
-        # Eğer s similarity ise, pos yüksek, neg düşük olmalı.
-        # Loss = max(0, margin - (sim_pos - sim_neg)) = max(0, margin - sim_pos + sim_neg)
+        # Skoru maskeliyoruz: Aynı kategoride olanları (mask=0) elemek için
+        # skorlarını -sonsuz yapıyoruz. Böylece max işleminde seçilmezler.
+        masked_scores = scores.clone()
+        masked_scores[diff_cat_mask == 0] = -1e9 
         
-        loss1 = torch.clamp(self.margin - pos_sim + neg_sim_1, min=0.0)
-        loss2 = torch.clamp(self.margin - pos_sim + neg_sim_2, min=0.0)
+        # 6. En Zor Negatifi Seç (Max Similarity)
+        # Her satır (örnek) için geçerli negatifler arasındaki en yüksek skoru bul.
+        hard_neg_scores, _ = torch.max(masked_scores, dim=1)
         
-        total_loss = torch.mean(loss1 + loss2)
-        return total_loss
+        # Güvenlik Kontrolü: Eğer batch içindeki herkes aynı kategorideyse,
+        # geçerli hiç negatif yoktur. Bu durumda loss patlamasın diye kontrol ediyoruz.
+        # valid_negatives: En az bir tane farklı kategorili eşleşmesi olanlar.
+        valid_negatives = (diff_cat_mask.sum(dim=1) > 0).float()
+        
+        # 7. Loss Hesabı: max(0, margin - pos + neg)
+        # margin: pozitif ile negatif arasında olmasını istediğimiz fark (örn: 0.2)
+        loss = torch.clamp(self.margin - pos_scores + hard_neg_scores, min=0.0)
+        
+        # Sadece geçerli negatifi olan örneklerin ortalamasını al
+        final_loss = (loss * valid_negatives).sum() / (valid_negatives.sum() + 1e-6)
+        
+        return final_loss

@@ -194,7 +194,7 @@ def main(args):
             batch_size=args.train_batchsize, shuffle=True, num_workers=args.workers, pin_memory=True)
         val_loader = data.DataLoader(
             SECONDCCDataset(args.data_folder, args.list_path, 'val', args.token_folder, args.vocab_file, args.max_length, args.allow_unk),
-            batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
+            json_file='./data/SECOND_CC/SECOND_CC.json', batch_size=args.val_batchsize, shuffle=False, num_workers=args.workers, pin_memory=True)
     
     encoder_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_optimizer, step_size=8, gamma=0.5) if args.fine_tune_encoder else None
     # encoder_trans_lr_scheduler = torch.optim.lr_scheduler.StepLR(encoder_trans_optimizer, step_size=5, gamma=0.5)
@@ -208,7 +208,7 @@ def main(args):
     mask_example_count = 9
     for epoch in range(start_epoch, args.num_epochs):        
         # Batches
-        for id, (imgA, imgB, _, _, token, token_len, _) in enumerate(train_loader):
+        for id, (imgA, imgB, _, _, token, token_len, _, categories) in enumerate(train_loader):
             #if id == 20:
             #    break
             start_time = time.time()
@@ -242,14 +242,19 @@ def main(args):
             scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
             targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
             # 1. Caption Loss (Mevcut)
+
+            categories = categories.cuda()
+
+            # 2. Decoder içinde 'sort_ind' ile sıralama yapıldığı için, kategorileri de aynı sıraya sok
+            # (Çünkü d12_vec ve d21_vec sıralandı)
+            categories = categories[sort_ind]
             loss_ce = criterion(scores, targets)
 
             # 2. Ranking Loss (Yeni) [cite: 360-362]
             # d12_vec ve d21_vec zaten sort_ind ile sıralanmış gelecektir (decoder içinde handle edilirse).
             # Eğer decoder içinde sıralanmadıysa burada sort_ind ile sıralayın veya sıralanmamış haliyle kullanın (ikisi de aynı batch sırasında olduğu sürece sorun yok).
             # Decoder'dan dönen d12_vec'in caption_lengths ile sıralanmış olduğunu varsayarsak:
-            loss_rank = ranking_loss_fn(d12_vec, d21_vec)
-
+            loss_rank = ranking_loss_fn(d12_vec, d21_vec, categories)
             # Toplam Loss [cite: 360]
             loss = loss_ce + lambda_r * loss_rank
             # Back prop.

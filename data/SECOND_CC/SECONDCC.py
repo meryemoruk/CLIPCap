@@ -18,11 +18,21 @@ class SECONDCCDataset(Dataset):
     2. token_all çıktısını sabit boyutta (5 caption) tutar.
     """
 
-    def __init__(self, data_folder, list_path, split, token_folder=None, vocab_file=None, max_length=40, allow_unk=0, max_iters=None):
+    def __init__(self, data_folder, list_path, split, token_folder=None, vocab_file=None, max_length=40, allow_unk=0, max_iters=None, json_file=None):
         self.list_path = list_path
         self.split = split
         self.max_length = max_length
         
+        self.category_map = {}
+        if json_file is not None:
+            print(f"Loading categories from {json_file}...")
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+                # JSON'daki "images" listesini tarayıp dosya adına göre kategori eşleştirmesi yapıyoruz
+                for img in data['images']:
+                    # filename: "00003_0_0.png" -> category: 6
+                    self.category_map[img['filename']] = img['category']
+
         # ClipEncoder için ImageNet İstatistikleri
         self.mean = [0.485, 0.456, 0.406]
         self.std = [0.229, 0.224, 0.225]
@@ -85,6 +95,9 @@ class SECONDCCDataset(Dataset):
     def __getitem__(self, index):
         datafiles = self.files[index]
         name = datafiles["name"]
+
+        full_filename = name + ".png" 
+        category_id = self.category_map.get(full_filename, -1)
         
         # --- 1. Resim Okuma ve Resize ---
         try:
@@ -162,5 +175,5 @@ class SECONDCCDataset(Dataset):
             # Token dosyası yoksa hepsi sıfır kalır
             token = np.zeros(self.max_length, dtype=int)
             token_len = 0
-
-        return imgA.copy(), imgB.copy(), token_all.copy(), token_all_len.copy(), token.copy(), np.array(token_len), name
+            
+        return imgA.copy(), imgB.copy(), token_all.copy(), token_all_len.copy(), token.copy(), np.array(token_len), name, category_id
