@@ -503,6 +503,25 @@ class FiLMBlock(nn.Module):
         
         return out
 
+class FusionFeed(nn.Module):
+    def __init__(self, dim, dropout = 0.):
+        super(FeedForward, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim*2, dim*4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim*4, dim*2),
+            nn.Dropout(dropout),
+
+            nn.Linear(dim*2, dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim, dim*2),
+            nn.Dropout(dropout),
+        )
+    def forward(self, x):
+        return self.net(x)
+
 class AttentiveEncoder(nn.Module):
     """
     One visual transformer block
@@ -517,9 +536,8 @@ class AttentiveEncoder(nn.Module):
         self.selftrans = nn.ModuleList([])
         for i in range(n_layers):                 
             self.selftrans.append(nn.ModuleList([
-                FusionConvBlock(channels),
-                FiLMBlock(channels)
-                # Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
+                Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
+                FusionFeed(channels),
             ]))
 
         # self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
@@ -580,19 +598,16 @@ class AttentiveEncoder(nn.Module):
         img2 = img2.view(batch, c, -1).transpose(-1, 1)
         img_sa1, img_sa2 = img1, img2
 
-        for (resblock, film) in self.selftrans:           
+        for (selfAtt, fusionFeed) in self.selftrans:
+            img_sa1 = selfAtt(img_sa1, img_sa1, img_sa1) + img_sa1
+            img_sa2 = selfAtt(img_sa2, img_sa2, img_sa2) + img_sa2
+        
             img_concat = torch.cat([img_sa1, img_sa2], dim = -1)
             
-            H = W = int(img_concat.shape[1] ** 0.5) 
-            # [B, N, 2D] -> [B, 2D, N] -> [B, 2D, H, W]
-            img_spatial = img_concat.permute(0, 2, 1).view(-1, img_concat.shape[-1], H, W)
+            img_fused = fusionFeed(img_concat)
 
-            img_fused = resblock(img_spatial)
-
-            img_fused = img_fused.flatten(2).permute(0, 2, 1)
-
-            img_sa1 = film(img_sa1, img_fused)
-            img_sa2 = film(img_sa2, img_fused)
+            img_sa1 = img_fused[:,:,:c] + img1
+            img_sa2 = img_fused[:,:,c:] + img2
 
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
