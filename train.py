@@ -160,6 +160,9 @@ def main(args):
     encoder_trans = encoder_trans.cuda()
     decoder = decoder.cuda()
     # Loss function
+    # Loss fonksiyonunu tanımla
+    ranking_loss_fn = BiDirectionalRankingLoss(margin=0.2).cuda()
+    lambda_r = 0.2 # Makalede önerilen ağırlık [cite: 362]
     criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1).cuda()
 
     # ------- PARAMETRE -------
@@ -233,15 +236,25 @@ def main(args):
             # --- MASK SAVING ---
 
             feat1, feat2 = encoder_trans(feat1, feat2, mask)
-            scores, caps_sorted, decode_lengths, sort_ind = decoder(feat1, feat2, token, token_len)
+            scores, caps_sorted, decode_lengths, sort_ind, d12_vec, d21_vec = decoder(feat1, feat2, token, token_len)
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
             targets = caps_sorted[:, 1:]
             scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
             targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
-            # Calculate loss
-            loss = criterion(scores, targets)
+            # 1. Caption Loss (Mevcut)
+            loss_ce = criterion(scores, targets)
+
+            # 2. Ranking Loss (Yeni) [cite: 360-362]
+            # d12_vec ve d21_vec zaten sort_ind ile sıralanmış gelecektir (decoder içinde handle edilirse).
+            # Eğer decoder içinde sıralanmadıysa burada sort_ind ile sıralayın veya sıralanmamış haliyle kullanın (ikisi de aynı batch sırasında olduğu sürece sorun yok).
+            # Decoder'dan dönen d12_vec'in caption_lengths ile sıralanmış olduğunu varsayarsak:
+            loss_rank = ranking_loss_fn(d12_vec, d21_vec)
+
+            # Toplam Loss [cite: 360]
+            loss = loss_ce + lambda_r * loss_rank
             # Back prop.
             loss.backward()
+            
             # Clip gradients
             if args.grad_clip is not None:
                 torch.nn.utils.clip_grad_value_(decoder.parameters(), args.grad_clip)

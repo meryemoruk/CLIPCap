@@ -9,6 +9,44 @@ import torch
 
 from torch.nn import functional as F
 
+class SymmetricDifferenceLayer(nn.Module):
+    def __init__(self, feature_dim):
+        super(SymmetricDifferenceLayer, self).__init__()
+        # Denklem 5 ve 8'deki W parametreleri (1x1 Conv veya Linear)
+        self.W_bfa = nn.Conv2d(feature_dim, feature_dim, 1)
+        self.W_bfb = nn.Conv2d(feature_dim, feature_dim, 1)
+        self.W_afa = nn.Conv2d(feature_dim, feature_dim, 1)
+        self.W_afb = nn.Conv2d(feature_dim, feature_dim, 1)
+        self.sigmoid = nn.Sigmoid()
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+
+    def forward(self, z1, z2):
+        """
+        z1: Before features (Batch, Channel, H, W)
+        z2: After features (Batch, Channel, H, W)
+        """
+        # 1. Before-to-After Change (D12)
+        # Denklem 5: Psi = Sigmoid(W*z1 + W*z2)
+        psi_12 = self.sigmoid(self.W_bfa(z1) + self.W_bfb(z2))
+        # Denklem 6: Z2_tilde = Psi * z2 (Değişmeyen kısım öğreniliyor)
+        z2_tilde = psi_12 * z2
+        # Denklem 7: D12 = z1 - z2_tilde (Fark çıkarılıyor)
+        D12 = z1 - z2_tilde
+
+        # 2. After-to-Before Change (D21)
+        # Denklem 8: Psi = Sigmoid(W*z2 + W*z1)
+        psi_21 = self.sigmoid(self.W_afa(z2) + self.W_afb(z1))
+        # Denklem 9: Z1_tilde = Psi * z1
+        z1_tilde = psi_21 * z1
+        # Denklem 10: D21 = z2 - z1_tilde
+        D21 = z2 - z1_tilde
+
+        # Ranking Loss için Global Average Pooling (Vektör haline getirme)
+        d12_vec = self.avg_pool(D12).flatten(1)
+        d21_vec = self.avg_pool(D21).flatten(1)
+
+        return D12, D21, d12_vec, d21_vec
+
 class resblock(nn.Module):
     '''
     module: Residual Block
@@ -208,6 +246,7 @@ class DecoderTransformer(nn.Module):
                                                    dropout=self.dropout)
         self.transformer = StackTransformer(decoder_layer, n_layers)
         self.position_encoding = PositionalEncoding(feature_dim, max_len=max_lengths)
+        self.sym_diff = SymmetricDifferenceLayer(feature_dim)
 
         # Linear layer to find scores over vocabulary
         self.wdc = nn.Linear(feature_dim, vocab_size)
@@ -236,9 +275,10 @@ class DecoderTransformer(nn.Module):
         :param encoded_captions: a tensor of dimension (batch_size, max_caption_length)
         :param caption_lengths: a tensor of dimension (batch_size)
         """
+        D12, D21, d12_vec, d21_vec = self.sym_diff(x1, x2)
 
         x_sam = self.cos(x1, x2)
-        x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) #(batch_size, 2channel, enc_image_size, enc_image_size)
+        x = torch.cat([x1, x2], dim = 1) + x_sam.unsqueeze(1) 
         x = self.LN(self.Conv1(x))
 
         batch, channel = x.size(0), x.size(1)
@@ -263,7 +303,7 @@ class DecoderTransformer(nn.Module):
         decode_lengths = (caption_lengths - 1).tolist()
         #encoded_caption = torch.cat((encoded_captions, torch.zeros([batch, 1], dtype = int).cuda()), dim=1)
         #decode_lengths = (caption_lengths).tolist()
-        return pred, encoded_captions, decode_lengths, sort_ind
+        return pred, encoded_captions, decode_lengths, sort_ind, d12_vec, d21_vec
 
     def sample(self, x1, x2, k=1):
         """

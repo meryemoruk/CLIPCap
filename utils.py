@@ -125,3 +125,55 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class BiDirectionalRankingLoss(nn.Module):
+    def __init__(self, margin=0.2):
+        super(BiDirectionalRankingLoss, self).__init__()
+        self.margin = margin
+
+    def cosine_sim(self, x1, x2):
+        # Cosine similarity: (Batch, Dim) -> (Batch)
+        return F.cosine_similarity(x1, x2, dim=1)
+
+    def forward(self, d12, d21):
+        """
+        d12: (Batch, Dim) - Before-to-After değişim vektörü
+        d21: (Batch, Dim) - After-to-Before değişim vektörü
+        """
+        batch_size = d12.size(0)
+        
+        # Pozitif benzerlik (Kendi eşleşmesi)
+        # s(d12, d21)
+        pos_sim = self.cosine_sim(d12, d21) # (Batch)
+        
+        loss = 0
+        # Negatif örnekleme: Batch içindeki diğer örnekleri negatif olarak kullanıyoruz.
+        # Makale "hard negatives" veya batch içi negatiflerden bahseder.
+        # Basitlik ve verimlilik için batch içindeki en yakın negatifi (hardest negative) seçebiliriz
+        # veya tüm negatiflerin ortalamasını alabiliriz. Burada standart triplet mantığıyla
+        # batch'i karıştırarak (roll) negatif üretiyoruz.
+        
+        # Negatif örnekler (Batch'i kaydırarak elde ediyoruz)
+        d21_neg = torch.roll(d21, shifts=1, dims=0)
+        d12_neg = torch.roll(d12, shifts=1, dims=0)
+        
+        # s(d12, d21-)
+        neg_sim_1 = self.cosine_sim(d12, d21_neg)
+        # s(d21, d12-)
+        neg_sim_2 = self.cosine_sim(d21, d12_neg)
+        
+        # Denklem 11: L_r = max(0, margin - s(pos) + s(neg))
+        # Not: Makalede s(.) cosine distance denmiş ama formül yapısı (gamma - s + s_neg) 
+        # ve standart triplet loss mantığına göre s(.) similarity olmalıdır.
+        # Eğer s similarity ise, pos yüksek, neg düşük olmalı.
+        # Loss = max(0, margin - (sim_pos - sim_neg)) = max(0, margin - sim_pos + sim_neg)
+        
+        loss1 = torch.clamp(self.margin - pos_sim + neg_sim_1, min=0.0)
+        loss2 = torch.clamp(self.margin - pos_sim + neg_sim_2, min=0.0)
+        
+        total_loss = torch.mean(loss1 + loss2)
+        return total_loss
