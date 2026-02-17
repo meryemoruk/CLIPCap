@@ -246,7 +246,7 @@ class DecoderTransformer(nn.Module):
                                                    dropout=self.dropout)
         self.transformer = StackTransformer(decoder_layer, n_layers)
         self.position_encoding = PositionalEncoding(feature_dim, max_len=max_lengths)
-        self.sym_diff = SymmetricDifferenceLayer(feature_dim)
+        self.sym_diff = SymmetricDifferenceLayer(encoder_dim)
 
         # Linear layer to find scores over vocabulary
         self.wdc = nn.Linear(feature_dim, vocab_size)
