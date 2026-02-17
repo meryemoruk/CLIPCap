@@ -244,6 +244,17 @@ class Encoder(nn.Module):
 
         self.featureCNN = FeatureCNN(1024)
 
+
+        # model_encoder.py -> Encoder sınıfı -> __init__ sonu
+        print("\n--- PARAMETRE DURUM KONTROLÜ ---")
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                print(f"EĞİTİLİYOR (Gradient Var): {name}")
+            else:
+                # Çok fazla çıktı olmaması için frozen olanları yazdırmayabiliriz
+                pass
+        print("--------------------------------\n")
+
     def forward(self, imageA, imageB):
         """
         Forward propagation.
@@ -273,13 +284,17 @@ class Encoder(nn.Module):
             featA = self.model(imageA)  # (batch_size, 2048, image_size/32, image_size/32)
             featB = self.model(imageB)
 
-            featA = self.featureCNN(featA.float())
-            featB = self.featureCNN(featB.float())
+        featA_CNN = self.featureCNN(featA.float())
+        featB_CNN = self.featureCNN(featB.float())
+        
+        #residual
+        featA = featA + featA_CNN
+        featB = featB + featB_CNN
 
-            mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
+        mask_spatial = F.interpolate(mask, size=featA.shape[2:], mode='bicubic')
 
-            featA = featA * mask_spatial
-            featB = featB * mask_spatial
+        featA = featA * mask_spatial
+        featB = featB * mask_spatial
 
         # maskedfeat1 = torch.cat([feat1, maskedfeat1], dim=1)
         # maskedfeat2 = torch.cat([feat2, maskedfeat2], dim=1)
@@ -369,159 +384,6 @@ class Transformer(nn.Module):
 
         return x
 
-
-class FusionConvBlock(nn.Module):
-    def __init__(self, dim):
-        super(FusionConvBlock, self).__init__()
-        
-        # Giriş boyutu concat olduğu için (dim * 2) olacak.
-        # Hedef boyut (dim) olacak.
-        
-        # 1. Adım: Boyut düşürme ve özellik karıştırma
-        self.reduce_conv = nn.Sequential(
-            nn.Conv2d(dim * 2, dim, kernel_size=1, bias=False),
-            nn.BatchNorm2d(dim),
-            nn.ReLU(inplace=True)
-        )
-        
-        # 2. Adım: Mekansal (Spatial) işleme (3x3)
-        self.spatial_conv = nn.Sequential(
-            nn.Conv2d(dim, dim, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(dim),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(dim, dim, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(dim)
-        )
-        
-        # Non-linearity
-        self.final_relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        # x shape: [Batch, 2*Dim, Height, Width]
-        
-        # Önce boyutu düşür
-        x_reduced = self.reduce_conv(x)
-        
-        # Residual bağlantı için kopyasını tut
-        identity = x_reduced
-        
-        # Mekansal işleme
-        out = self.spatial_conv(x_reduced)
-        
-        # Residual bağlantı (Skip Connection)
-        out = out + identity
-        out = self.final_relu(out)
-        
-        return out
-
-class CrossAttentionBlock(nn.Module):
-    def __init__(self, d_model, nhead, dropout=0.1):
-        super().__init__()
-        self.cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
-        
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model * 4),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * 4, d_model)
-        )
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, tgt, memory, mask=None):
-        """
-        tgt: Image B (Current)
-        memory: Image A (Reference)
-        """
-        
-        # 2. Cross Attention (Image B, Image A'ya bakar: "Ne değişti?")
-        tgt2 = self.norm1(tgt)
-        tgt2, _ = self.cross_attn(query=tgt2, key=memory, value=memory)
-        tgt = tgt + self.dropout(tgt2)
-
-        # 3. Feed Forward
-        tgt2 = self.norm2(tgt)
-        tgt = tgt + self.dropout(self.ffn(tgt2))
-        
-        return tgt
-
-class SpatialAttention(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        # Özellik haritasını 1 kanala (önem derecesine) indir
-        self.conv = nn.Conv1d(dim, 1, kernel_size=1) 
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x_original, x_fused):
-        # x_fused: [B, N, D] -> [B, D, N] (Conv1d için)
-        map_in = x_fused.permute(0, 2, 1)
-        
-        # Dikkat haritası: [B, 1, N]
-        attention_map = self.sigmoid(self.conv(map_in))
-        
-        # [B, 1, N] -> [B, N, 1]
-        attention_map = attention_map.permute(0, 2, 1)
-        
-        # Orijinal veriyi önem derecesine göre ölçekle
-        return x_original * attention_map
-
-class FiLMBlock(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        
-        # img_fused (condition) bilgisinden gamma ve beta üret
-        # dim -> dim * 2 (hem gamma hem beta için)
-        self.cond_proj = nn.Linear(dim, dim * 2)
-        
-        # İsteğe bağlı: Gamma ve Beta'nın hemen devreye girmemesi için 
-        # ağırlıkları 0'a yakın başlatmak iyi bir pratiktir.
-        self._init_weights()
-
-    def _init_weights(self):
-        # Linear katmanın ağırlıklarını sıfıra yakın başlatıyoruz
-        nn.init.constant_(self.cond_proj.weight, 0)
-        nn.init.constant_(self.cond_proj.bias, 0)
-
-    def forward(self, x_content, x_condition):
-        """
-        x_content: img_sa1 veya img_sa2 (Değiştirilecek özellik)
-        x_condition: img_fused (Değişiklik bilgisi)
-        """
-        
-        # 1. Gamma ve Beta'yı üret
-        # x_condition shape: [Batch, N, Dim]
-        params = self.cond_proj(x_condition)
-        
-        # Chunk ile ikiye böl: Gamma ve Beta
-        gamma, beta = torch.chunk(params, 2, dim=-1)
-        
-        # 2. Residual FiLM İşlemi (Formül: (1 + gamma) * x + beta)
-        # Eğer gamma ve beta 0 ise, sonuç direkt x_content olur (Residual etkisi).
-        out = (1 + gamma) * x_content + beta
-        
-        return out
-
-class FusionFeed(nn.Module):
-    def __init__(self, dim, dropout = 0.):
-        super(FusionFeed, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim*2, dim*4),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim*4, dim*2),
-            nn.Dropout(dropout),
-
-            nn.Linear(dim*2, dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim, dim*2),
-            nn.Dropout(dropout),
-        )
-    def forward(self, x):
-        return self.net(x)
-
 class AttentiveEncoder(nn.Module):
     """
     One visual transformer block
@@ -529,6 +391,17 @@ class AttentiveEncoder(nn.Module):
     def __init__(self, n_layers, feature_size, heads, hidden_dim, attention_dim = 512, dropout = 0., network = "resnet101"):
         super(AttentiveEncoder, self).__init__()
         h_feat, w_feat, channels = feature_size
+
+        # --- EKLENECEK KISIM (BAŞLANGIÇ) ---
+        # 0: Before (Önceki Görüntü), 1: After (Sonraki Görüntü)
+        # Channels boyutu feature_size[2] yani 'channels' değişkeninden gelir.
+        self.time_embedding = nn.Embedding(2, channels)
+        
+        # Embedding'i sıfıra yakın başlat ki eğitimi patlatmasın, yavaş yavaş öğrensin
+        self.time_embedding.weight.data.normal_(0, 0.02)
+        # --- EKLENECEK KISIM (BİTİŞ) ---
+
+
         self.network = network
         
         self.h_embedding = nn.Embedding(h_feat, int(channels/2))
@@ -537,7 +410,6 @@ class AttentiveEncoder(nn.Module):
         for i in range(n_layers):                 
             self.selftrans.append(nn.ModuleList([
                 Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False),
-                FusionFeed(channels, dropout),
             ]))
 
         # self.cross_attr1 = Transformer(channels, channels, heads, attention_dim, hidden_dim, dropout, norm_first=False)
@@ -594,20 +466,29 @@ class AttentiveEncoder(nn.Module):
         pos_embedding = pos_embedding.permute(2,0,1).unsqueeze(0).repeat(batch, 1, 1, 1)
         img1 = img1 + pos_embedding
         img2 = img2 + pos_embedding
+
+        # --- EKLENECEK KISIM (BAŞLANGIÇ) ---
+        # Time Embedding Hazırlığı
+        # Tip 0: Önceki Görüntü (Before)
+        # Tip 1: Sonraki Görüntü (After)
+        
+        # (Channels,) boyutunda vektör alırız
+        time_emb_before = self.time_embedding(torch.tensor(0).to(img1.device)) 
+        time_emb_after  = self.time_embedding(torch.tensor(1).to(img1.device))
+        
+        # Boyutları (Batch, Channels, H, W) formatına uydurmak için:
+        # (C) -> (1, C, 1, 1) şeklinde genişletip ekliyoruz (Broadcasting)
+        img1 = img1 + time_emb_before.view(1, c, 1, 1)
+        img2 = img2 + time_emb_after.view(1, c, 1, 1)
+        # --- EKLENECEK KISIM (BİTİŞ) ---
+
         img1 = img1.view(batch, c, -1).transpose(-1, 1)#batch, hw, c
         img2 = img2.view(batch, c, -1).transpose(-1, 1)
         img_sa1, img_sa2 = img1, img2
 
-        for (selfAtt, fusionFeed) in self.selftrans:
-            img_sa1 = selfAtt(img_sa1, img_sa1, img_sa1) + img_sa1
-            img_sa2 = selfAtt(img_sa2, img_sa2, img_sa2) + img_sa2
-        
-            img_concat = torch.cat([img_sa1, img_sa2], dim = -1)
-            
-            img_fused = fusionFeed(img_concat)
-
-            img_sa1 = img_fused[:,:,:c] + img1
-            img_sa2 = img_fused[:,:,c:] + img2
+        for (l) in self.selftrans:      
+            img_sa1 = l[0](img_sa1, img_sa1, img_sa1) + img_sa1
+            img_sa2 = l[0](img_sa2, img_sa2, img_sa2) + img_sa2
 
 
         img1 = img_sa1.reshape(batch, h, w, c).transpose(-1, 1)
@@ -632,6 +513,45 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         # x: [Batch, Seq_Len, Channel]
         return x + self.pe[:x.size(1), :].unsqueeze(0)
+
+class CrossAttentionBlock(nn.Module):
+    def __init__(self, d_model, nhead, dropout=0.1):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+        
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * 4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model * 4, d_model)
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, tgt, memory, mask=None):
+        """
+        tgt: Image B (Current)
+        memory: Image A (Reference)
+        """
+        # 1. Self Attention (Image B kendi içine bakar)
+        tgt2 = self.norm1(tgt)
+        tgt2, _ = self.self_attn(tgt2, tgt2, tgt2)
+        tgt = tgt + self.dropout(tgt2)
+
+        # 2. Cross Attention (Image B, Image A'ya bakar: "Ne değişti?")
+        tgt2 = self.norm2(tgt)
+        tgt2, _ = self.cross_attn(query=tgt2, key=memory, value=memory)
+        tgt = tgt + self.dropout(tgt2)
+
+        # 3. Feed Forward
+        tgt2 = self.norm3(tgt)
+        tgt = tgt + self.dropout(self.ffn(tgt2))
+        
+        return tgt
 
 class ChangeAwareEncoder(nn.Module):
     def __init__(self, feature_dim=1024, heads=8, n_layers=2, hidden_dim=2048, dropout=0.1):
