@@ -295,8 +295,8 @@ class DecoderTransformer(nn.Module):
 
         pred = self.transformer(word_emb, x, tgt_mask=mask, tgt_key_padding_mask=tgt_pad_mask)  # (length, batch, feature_dim)
         pred = self.wdc(self.dropout(pred))  # (length, batch, vocab_size)
+
         pred = pred.permute(1, 0, 2)
-        decode_lengths = (caption_lengths - 1).tolist()
         caption_lengths, sort_ind = caption_lengths.sort(dim=0, descending=True)
         encoded_captions = encoded_captions[sort_ind]
         pred = pred[sort_ind]
@@ -304,6 +304,8 @@ class DecoderTransformer(nn.Module):
         # Vektörleri de aynı sıraya sokun (Loss eşleşmesi doğru olsun diye)
         d12_vec = d12_vec[sort_ind]
         d21_vec = d21_vec[sort_ind]
+        decode_lengths = (caption_lengths - 1).tolist()
+
         #encoded_caption = torch.cat((encoded_captions, torch.zeros([batch, 1], dtype = int).cuda()), dim=1)
         #decode_lengths = (caption_lengths).tolist()
         return pred, encoded_captions, decode_lengths, sort_ind, d12_vec, d21_vec
