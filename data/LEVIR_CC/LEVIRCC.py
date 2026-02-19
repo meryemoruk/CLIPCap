@@ -15,7 +15,7 @@ class LEVIRCCDataset(Dataset):
     A PyTorch Dataset class to be used in a PyTorch DataLoader to create batches.
     """
 
-    def __init__(self, data_folder, list_path, split, token_folder = None, vocab_file = None, max_length = 40, allow_unk = 0, max_iters=None):
+    def __init__(self, data_folder, list_path, split, token_folder = None, vocab_file = None, max_length = 40, allow_unk = 0, max_iters=None, json_file=None):
         """
         :param data_folder: folder where image files are stored
         :param list_path: folder where the file name-lists of Train/val/test.txt sets are stored
@@ -26,6 +26,16 @@ class LEVIRCCDataset(Dataset):
         :param max_iters: the maximum iteration when loading the data
         :param allow_unk: whether to allow the tokens have unknow word or not
         """
+        self.category_map = {}
+        if json_file is not None:
+            print(f"Loading categories from {json_file}...")
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+                # JSON'daki "images" listesini tarayıp dosya adına göre kategori eşleştirmesi yapıyoruz
+                for img in data['images']:
+                    # filename: "00003_0_0.png" -> category: 6
+                    self.category_map[img['filename']] = img['category']
+
         self.mean=[100.6790,  99.5023,  84.9932]
         self.std=[50.9820, 48.4838, 44.7057]
         self.list_path = list_path
@@ -96,6 +106,10 @@ class LEVIRCCDataset(Dataset):
     def __getitem__(self, index):
         datafiles = self.files[index]
         name = datafiles["name"]
+
+        full_filename = name + ".png" 
+        category_id = self.category_map.get(full_filename, -1)
+
         imgA = imread(datafiles["imgA"])
         imgB = imread(datafiles["imgB"])
         imgA = np.asarray(imgA, np.float32)
@@ -103,11 +117,7 @@ class LEVIRCCDataset(Dataset):
         imgA = np.moveaxis(imgA, -1, 0)     
         imgB = np.moveaxis(imgB, -1, 0)
 
-        for i in range(len(self.mean)):
-            imgA[i,:,:] -= self.mean[i]
-            imgA[i,:,:] /= self.std[i]
-            imgB[i,:,:] -= self.mean[i]
-            imgB[i,:,:] /= self.std[i]      
+            
         if datafiles["token"] is not None:
             caption = open(datafiles["token"])
             caption = caption.read()
@@ -141,7 +151,7 @@ class LEVIRCCDataset(Dataset):
             token_len = np.zeros(1,dtype=int)
             token_all_len = np.zeros(1,dtype=int)
 
-        return imgA.copy(), imgB.copy(), token_all.copy(), token_all_len.copy(), token.copy(), np.array(token_len), name
+        return imgA.copy(), imgB.copy(), token_all.copy(), token_all_len.copy(), token.copy(), np.array(token_len), name, category_id
 
 if __name__ == '__main__':
     
