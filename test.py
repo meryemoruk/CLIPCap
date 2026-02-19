@@ -108,7 +108,7 @@ def main(args):
     with torch.no_grad():
         # Batches
         # Batches
-        for ind, (imgA, imgB, token_all, token_all_len, _, _, _, categories) in enumerate(val_loader):
+        for ind, (imgA, imgB, token_all, token_all_len, _, _, _, categories) in enumerate(test_loader):
                 # Move to GPU, if available
                 imgA = imgA.cuda()
                 imgB = imgB.cuda()
