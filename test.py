@@ -13,6 +13,9 @@ from model.model_encoder import Encoder, AttentiveEncoder
 from model.model_decoder import DecoderTransformer
 from utils import *
 
+from torch.nn.utils.rnn import pack_padded_sequence
+from utils import BiDirectionalRankingLoss
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -93,57 +96,64 @@ def main(args):
     nochange_hypotheses = list()
     change_acc=0
     nochange_acc=0
+    # Initialize loss functions (same as train.py)
+    ranking_loss_fn = BiDirectionalRankingLoss(margin=0.2).cuda()
+    lambda_r = 0.2
+    criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1).cuda()
+
+    total_loss = 0.0
+    total_loss_ce = 0.0
+    total_loss_rank = 0.0
+
     with torch.no_grad():
         # Batches
-        for ind, (imgA, imgB, token_all, token_all_len, _, _, _) in enumerate(test_loader):
+        # Batches
+        for ind, (imgA, imgB, token_all, token_all_len, _, _, _, categories) in enumerate(val_loader):
+                # Move to GPU, if available
+                imgA = imgA.cuda()
+                imgB = imgB.cuda()
+                
+                token_all = token_all.squeeze(0).cuda()
 
-            # Move to GPU, if available
-            imgA = imgA.cuda()
-            imgB = imgB.cuda()
-            if args.data_name == 'Dubai_CC':
-                imgA = l_resize1(imgA)
-                imgB = l_resize2(imgB)
-            token_all = token_all.squeeze(0).cuda()
-            #decode_lengths = max(token_all_len.squeeze(0)).item()
-            # Forward prop.
-            if encoder is not None:
+                # Forward prop.
                 feat1, feat2, mask = encoder(imgA, imgB)
-            feat1, feat2 = encoder_trans(feat1, feat2, mask)
-            seq = decoder.sample_beam(feat1, feat2, args.beam_size)
 
-            img_token = token_all.tolist()
-            img_tokens = list(map(lambda c: [w for w in c if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}],
-                    img_token))  # remove <start> and pads
-            references.append(img_tokens)
+                feat1, feat2 = encoder_trans(feat1, feat2, mask)
 
-            pred_seq = [w for w in seq if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}]
-            hypotheses.append(pred_seq)
-            assert len(references) == len(hypotheses)
-            # # 判断有没有变化
-          
-            pred_caption = ""
-            ref_caption = ""
-            for i in pred_seq:
-                pred_caption += (list(word_vocab.keys())[i]) + " "
-            ref_caption = ""
-            for i in img_tokens[0]:
-                ref_caption += (list(word_vocab.keys())[i]) + " "
-            ref_captions = ""
-            for i in img_tokens:
-                for j in i:
-                    ref_captions += (list(word_vocab.keys())[j]) + " "
-                ref_captions += ".    "
+                seq = decoder.sample_beam(feat1, feat2, args.beam_size)
 
-            if ref_caption in nochange_list:
-                nochange_references.append(img_tokens)
-                nochange_hypotheses.append(pred_seq)
-                if pred_caption in nochange_list:
-                    nochange_acc = nochange_acc+1
-            else:
-                change_references.append(img_tokens)
-                change_hypotheses.append(pred_seq)
-                if pred_caption not in nochange_list:
-                    change_acc = change_acc+1
+                img_token = token_all.tolist()
+                img_tokens = list(map(lambda c: [w for w in c if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}],
+                        img_token))  # remove <start> and pads
+                references.append(img_tokens)
+
+                pred_seq = [w for w in seq if w not in {word_vocab['<START>'], word_vocab['<END>'], word_vocab['<NULL>']}]
+                hypotheses.append(pred_seq)
+                assert len(references) == len(hypotheses)
+
+                pred_caption = ""
+                ref_caption = ""
+                for i in pred_seq:
+                    pred_caption += (list(word_vocab.keys())[i]) + " "
+                for j in img_tokens[0]:
+                    ref_caption += (list(word_vocab.keys())[j]) + " "
+                
+                if ind == 0 or ind == 120:
+                    print("Prediction:")
+                    print(pred_caption)
+                    print("Referance:")
+                    print(ref_caption)
+
+                if ref_caption in nochange_list:
+                    nochange_references.append(img_tokens)
+                    nochange_hypotheses.append(pred_seq)
+                    if pred_caption in nochange_list:
+                        nochange_acc = nochange_acc+1
+                else:
+                    change_references.append(img_tokens)
+                    change_hypotheses.append(pred_seq)
+                    if pred_caption not in nochange_list:
+                        change_acc = change_acc+1
 
         test_time = time.time() - test_start_time
         # Calculate evaluation scores
