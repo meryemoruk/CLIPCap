@@ -51,15 +51,6 @@ def visualize_results(img1_tensor, img2_tensor, mask_tensor, output_path="result
     img2_np = img2_use.detach().permute(1, 2, 0).cpu().numpy()
     mask_np = mask_resized.squeeze().detach().cpu().numpy()
 
-    # --- 4. DENORMALIZATION (ÖNEMLİ ADIM) ---
-    # ImageNet Mean ve Std değerleri (CLIP ve DINO bunları kullanır)
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
-
-    # Formül: original = (normalized * std) + mean
-    img1_np = (img1_np * std) + mean
-    img2_np = (img2_np * std) + mean
-
     # Değerleri [0, 1] aralığına sıkıştır (Clip)
     # Bu işlem float hatalarını temizler ve 'Clipping' uyarısını kesin çözer.
     img1_np = np.clip(img1_np, 0, 1)
