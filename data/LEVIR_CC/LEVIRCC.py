@@ -26,8 +26,7 @@ class LEVIRCCDataset(Dataset):
         :param max_iters: the maximum iteration when loading the data
         :param allow_unk: whether to allow the tokens have unknow word or not
         """
-        self.mean=[100.6790,  99.5023,  84.9932]
-        self.std=[50.9820, 48.4838, 44.7057]
+        
         self.list_path = list_path
         self.split = split
         self.max_length = max_length
@@ -98,16 +97,15 @@ class LEVIRCCDataset(Dataset):
         name = datafiles["name"]
         imgA = imread(datafiles["imgA"])
         imgB = imread(datafiles["imgB"])
-        imgA = np.asarray(imgA, np.float32)
-        imgB = np.asarray(imgB, np.float32)   
+        # Float Dönüşümü ve Ölçekleme
+        imgA = np.asarray(imgA, np.float32) / 255.0
+        imgB = np.asarray(imgB, np.float32) / 255.0
+        
+        # (H, W, C) -> (C, H, W)
         imgA = np.moveaxis(imgA, -1, 0)     
         imgB = np.moveaxis(imgB, -1, 0)
 
-        for i in range(len(self.mean)):
-            imgA[i,:,:] -= self.mean[i]
-            imgA[i,:,:] /= self.std[i]
-            imgB[i,:,:] -= self.mean[i]
-            imgB[i,:,:] /= self.std[i]      
+        
         if datafiles["token"] is not None:
             caption = open(datafiles["token"])
             caption = caption.read()
@@ -142,28 +140,3 @@ class LEVIRCCDataset(Dataset):
             token_all_len = np.zeros(1,dtype=int)
 
         return imgA.copy(), imgB.copy(), token_all.copy(), token_all_len.copy(), token.copy(), np.array(token_len), name
-
-if __name__ == '__main__':
-    
-    train_dataset = LEVIRCCDataset(data_folder='/iarai/home/shizhen.chang/Change_Caption/Data/LEVIR_CC/images',list_path='./data/LEVIR_CC1/', split= 'train', token_folder=None)
-    train_loader = DataLoader(dataset=train_dataset,batch_size=1,shuffle=False,pin_memory=True)
-    channels_sumA,channel_squared_sumA,channels_sumB,channel_squared_sumB = 0,0,0,0
-    num_batches = len(train_loader)
-    index = 0
-    for dataA,dataB,_,_,_,_,_ in train_loader:
-        index += 1
-        if index%1000==0:
-           print(index,num_batches)
-        channels_sumA += torch.mean(dataA,dim=[0,2,3])   
-        channel_squared_sumA += torch.mean(dataA**2,dim=[0,2,3])       
-        channels_sumB += torch.mean(dataB,dim=[0,2,3])   
-        channel_squared_sumB += torch.mean(dataB**2,dim=[0,2,3])
-        channels_sum = channels_sumA + channels_sumB
-        channel_squared_sum = channel_squared_sumA + channel_squared_sumB
-    meanA = channels_sumA/num_batches
-    stdA = (channel_squared_sumA/num_batches - meanA**2)**0.5
-    meanB = channels_sumB/num_batches
-    stdB = (channel_squared_sumB/num_batches - meanB**2)**0.5
-    mean = (channels_sum)/(num_batches*2)
-    std = ((channel_squared_sum) / (num_batches*2) - mean**2)**0.5   
-    print(meanA,stdA,meanB,stdB,mean,std) 
